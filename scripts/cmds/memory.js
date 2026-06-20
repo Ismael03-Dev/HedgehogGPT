@@ -1,5 +1,6 @@
 const fs = require("fs");
-const { createCanvas, loadImage } = require("canvas");
+const path = require("path");
+const { createCanvas } = require("canvas");
 const axios = require("axios");
 
 const CASH_URL   = "https://cash-api-five.vercel.app/api/cash";
@@ -144,11 +145,21 @@ function getUserName(uid, api) {
   });
 }
 
-async function getUserAvatar(uid, api) {
+async function loadAvatarBuffer(uid, api) {
   try {
-    const d = await api.getUserInfo(uid);
-    return d[uid]?.thumbSrc || `https://graph.facebook.com/${uid}/picture?width=200&height=200`;
-  } catch { return `https://graph.facebook.com/${uid}/picture?width=200&height=200`; }
+    const d   = await api.getUserInfo(uid);
+    const url = d[uid]?.thumbSrc || `https://graph.facebook.com/${uid}/picture?width=200&height=200&type=square`;
+    const res = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 8000,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "image/webp,image/apng,image/*,*/*;q=0.8"
+      }
+    });
+    const { loadImage } = require("canvas");
+    return await loadImage(Buffer.from(res.data));
+  } catch { return null; }
 }
 
 function UI(lines) {
@@ -160,17 +171,18 @@ function UI(lines) {
   return out + "╰─────────────────────•";
 }
 
-const GAME_FILE  = "./memory_games.json";
-const MP_FILE    = "./memory_mp_games.json";
-const STATS_FILE = "./memory_stats.json";
-const ONLINE_FILE = "./memory_online.json";
+const GAME_FILE    = "./memory_games.json";
+const MP_FILE      = "./memory_mp_games.json";
+const STATS_FILE   = "./memory_stats.json";
+const ONLINE_FILE  = "./memory_online.json";
 
-let activeGames    = new Map();
-let mpGames        = new Map();
-let onlineGames    = new Map();
-let onlineInvites  = new Map();
-let playerStats    = {};
+let activeGames   = new Map();
+let mpGames       = new Map();
+let onlineGames   = new Map();
+let onlineInvites = new Map();
+let playerStats   = {};
 const gameTimeouts = new Map();
+const inviteTimeouts = new Map();
 
 if (fs.existsSync(GAME_FILE)) {
   try {
@@ -188,7 +200,7 @@ if (fs.existsSync(ONLINE_FILE)) {
   try {
     const raw = JSON.parse(fs.readFileSync(ONLINE_FILE, "utf8"));
     for (const [k, v] of Object.entries(raw)) {
-      if (v.bet) v.bet = BigInt(v.bet);
+      if (v.bet !== undefined) v.bet = BigInt(v.bet);
       onlineGames.set(k, v);
     }
   } catch {}
@@ -216,9 +228,7 @@ function saveMPGames() {
 function saveOnlineGames() {
   try {
     const obj = {};
-    for (const [k, v] of onlineGames) {
-      obj[k] = { ...v, bet: v.bet ? v.bet.toString() : "0" };
-    }
+    for (const [k, v] of onlineGames) obj[k] = { ...v, bet: v.bet !== undefined ? v.bet.toString() : "0" };
     fs.writeFileSync(ONLINE_FILE, JSON.stringify(obj, null, 2));
   } catch {}
 }
@@ -263,11 +273,12 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// Thèmes — chaque symbole a un identifiant texte (plus d'emoji)
 const CARD_THEMES = {
-  animaux: ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸"],
-  fruits:  ["🍎","🍊","🍋","🍇","🍓","🫐","🍑","🍒","🥭","🍍","🥝","🍈","🍉","🥥"],
-  casino:  ["🎰","🎲","🃏","🎴","🀄","🎯","🎳","🎮","🕹️","🎱","🎭","🎪","🎟️","🎫"],
-  espace:  ["🌍","🌙","⭐","☀️","🪐","🌠","🌌","🚀","🛸","🌟","💫","🌑","🌕","🛰️"]
+  animaux: ["DOG","CAT","MOUSE","HAMSTER","RABBIT","FOX","BEAR","PANDA","KOALA","TIGER","LION","COW","PIG","FROG"],
+  fruits:  ["APPLE","ORANGE","LEMON","GRAPE","STRAWBERRY","BLUEBERRY","PEACH","CHERRY","MANGO","PINEAPPLE","KIWI","MELON","WATERMELON","COCONUT"],
+  casino:  ["SLOT","DICE","CARD","CLUB","CHIP","TARGET","BOWLING","CONTROLLER","JOYSTICK","BILLIARD","MASK","TENT","TICKET","TROPHY"],
+  espace:  ["EARTH","MOON","STAR","SUN","SATURN","COMET","GALAXY","ROCKET","UFO","SPARKLE","GLOW","NEWMOON","FULLMOON","SATELLITE"]
 };
 
 const DIFFICULTIES = {
@@ -279,6 +290,7 @@ const DIFFICULTIES = {
 
 const MP_CONFIG  = { cols: 5, pairs: 12, multiplier: 4, bonusSpeed: 200, bonusMult: 8 };
 const TIME_LIMIT = 600;
+const INVITE_TTL = 60000;
 
 const DIFFICULTY_COLORS = { facile: "#22c55e", normal: "#3b82f6", difficile: "#f59e0b", extreme: "#ef4444", multiplayer: "#a855f7", online: "#06b6d4" };
 
@@ -303,16 +315,261 @@ function parseCoord(input, cols, rows) {
   return { row, col, index: row * cols + col };
 }
 
-const EMOJI_GLOW_COLORS = {
-  "🐶":"#f59e0b","🐱":"#f97316","🐭":"#94a3b8","🐹":"#fb923c","🐰":"#f9a8d4","🦊":"#f97316","🐻":"#92400e","🐼":"#e2e8f0","🐨":"#94a3b8","🐯":"#f59e0b","🦁":"#d97706","🐮":"#fbbf24","🐷":"#ec4899","🐸":"#22c55e",
-  "🍎":"#ef4444","🍊":"#f97316","🍋":"#fbbf24","🍇":"#7c3aed","🍓":"#f43f5e","🫐":"#3b82f6","🍑":"#fb923c","🍒":"#dc2626","🥭":"#f59e0b","🍍":"#84cc16","🥝":"#65a30d","🍈":"#a3e635","🍉":"#22c55e","🥥":"#92400e",
-  "🎰":"#fbbf24","🎲":"#ef4444","🃏":"#e2e8f0","🎯":"#ef4444","🎮":"#818cf8","🎱":"#1e293b","🎳":"#f59e0b","🕹️":"#a78bfa","🎴":"#f97316","🀄":"#fbbf24","🎭":"#ec4899","🎪":"#f59e0b","🎟️":"#818cf8","🎫":"#22c55e",
-  "🌍":"#22c55e","🌙":"#fbbf24","⭐":"#fde047","☀️":"#f59e0b","🪐":"#f97316","🌠":"#818cf8","🌌":"#a78bfa","🚀":"#60a5fa","🛸":"#a78bfa","🌟":"#fde047","💫":"#fbbf24","🌑":"#94a3b8","🌕":"#fbbf24","🛰️":"#60a5fa"
+// ─── COULEURS PAR SYMBOLE ───────────────────────────────────────────────────
+
+const SYMBOL_COLORS = {
+  DOG:"#f59e0b", CAT:"#f97316", MOUSE:"#94a3b8", HAMSTER:"#fb923c", RABBIT:"#f9a8d4", FOX:"#ea580c", BEAR:"#92400e", PANDA:"#e2e8f0", KOALA:"#9ca3af", TIGER:"#f59e0b", LION:"#d97706", COW:"#fbbf24", PIG:"#ec4899", FROG:"#22c55e",
+  APPLE:"#ef4444", ORANGE:"#f97316", LEMON:"#fbbf24", GRAPE:"#7c3aed", STRAWBERRY:"#f43f5e", BLUEBERRY:"#3b82f6", PEACH:"#fb923c", CHERRY:"#dc2626", MANGO:"#f59e0b", PINEAPPLE:"#84cc16", KIWI:"#65a30d", MELON:"#a3e635", WATERMELON:"#22c55e", COCONUT:"#92400e",
+  SLOT:"#fbbf24", DICE:"#ef4444", CARD:"#e2e8f0", CLUB:"#1e293b", CHIP:"#a855f7", TARGET:"#ef4444", BOWLING:"#f59e0b", CONTROLLER:"#818cf8", JOYSTICK:"#a78bfa", BILLIARD:"#1e293b", MASK:"#ec4899", TENT:"#f59e0b", TICKET:"#818cf8", TROPHY:"#fbbf24",
+  EARTH:"#22c55e", MOON:"#fbbf24", STAR:"#fde047", SUN:"#f59e0b", SATURN:"#f97316", COMET:"#818cf8", GALAXY:"#a78bfa", ROCKET:"#60a5fa", UFO:"#a78bfa", SPARKLE:"#fde047", GLOW:"#fbbf24", NEWMOON:"#94a3b8", FULLMOON:"#fbbf24", SATELLITE:"#60a5fa"
 };
 
-function getEmojiGlow(e) { return EMOJI_GLOW_COLORS[e] || "#818cf8"; }
+function getSymbolColor(s) { return SYMBOL_COLORS[s] || "#818cf8"; }
 
-async function generateBoardImage({ game, username, avatarUrl, lastFlipped, lastMatch, lastMiss, player2Name }) {
+// ─── DESSIN GÉOMÉTRIQUE DES SYMBOLES (remplace les emojis) ──────────────────
+
+function drawSymbolIcon(ctx, symbol, cx, cy, size, glow = false) {
+  const color = getSymbolColor(symbol);
+  const s = size;
+
+  ctx.save();
+  if (glow) { ctx.shadowColor = color; ctx.shadowBlur = 20; }
+
+  switch (symbol) {
+    case "DOG": case "CAT": case "FOX": case "TIGER": case "LION": case "BEAR": case "PANDA": case "KOALA": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(cx, cy + s * 0.05, s * 0.42, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(cx - s * 0.35, cy - s * 0.3); ctx.lineTo(cx - s * 0.15, cy - s * 0.6); ctx.lineTo(cx - s * 0.02, cy - s * 0.22); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(cx + s * 0.35, cy - s * 0.3); ctx.lineTo(cx + s * 0.15, cy - s * 0.6); ctx.lineTo(cx + s * 0.02, cy - s * 0.22); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#1f2937";
+      ctx.beginPath(); ctx.arc(cx - s * 0.16, cy, s * 0.06, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + s * 0.16, cy, s * 0.06, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy + s * 0.16, s * 0.05, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "MOUSE": case "HAMSTER": case "RABBIT": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.ellipse(cx, cy + s * 0.1, s * 0.36, s * 0.34, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx - s * 0.18, cy - s * 0.42, s * 0.16, s * 0.26, -0.2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + s * 0.18, cy - s * 0.42, s * 0.16, s * 0.26, 0.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#1f2937";
+      ctx.beginPath(); ctx.arc(cx - s * 0.13, cy + s * 0.05, s * 0.05, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + s * 0.13, cy + s * 0.05, s * 0.05, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "COW": case "PIG": case "FROG": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.ellipse(cx, cy, s * 0.4, s * 0.34, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#1f2937";
+      ctx.beginPath(); ctx.arc(cx - s * 0.15, cy - s * 0.08, s * 0.06, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + s * 0.15, cy - s * 0.08, s * 0.06, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = color === "#ec4899" ? "#be185d" : "#16a34a";
+      ctx.beginPath(); ctx.ellipse(cx, cy + s * 0.15, s * 0.14, s * 0.08, 0, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "APPLE": case "CHERRY": case "STRAWBERRY": case "PEACH": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(cx, cy + s * 0.05, s * 0.36, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#16a34a"; ctx.lineWidth = s * 0.07;
+      ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.3); ctx.lineTo(cx + s * 0.05, cy - s * 0.5); ctx.stroke();
+      ctx.fillStyle = "#22c55e";
+      ctx.beginPath(); ctx.ellipse(cx + s * 0.18, cy - s * 0.42, s * 0.12, s * 0.07, 0.6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.3)";
+      ctx.beginPath(); ctx.ellipse(cx - s * 0.12, cy - s * 0.05, s * 0.08, s * 0.14, -0.3, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "ORANGE": case "LEMON": case "MANGO": case "WATERMELON": case "MELON": case "COCONUT": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.ellipse(cx, cy, s * 0.38, s * 0.36, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.15)"; ctx.lineWidth = s * 0.03;
+      ctx.beginPath(); ctx.ellipse(cx, cy, s * 0.38, s * 0.36, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.25)";
+      ctx.beginPath(); ctx.ellipse(cx - s * 0.12, cy - s * 0.1, s * 0.1, s * 0.16, -0.3, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "GRAPE": case "BLUEBERRY": case "KIWI": {
+      ctx.fillStyle = color;
+      const offsets = [[-0.18,-0.1],[0.18,-0.1],[0,0.05],[-0.22,0.18],[0.22,0.18],[0,0.3]];
+      offsets.forEach(([ox, oy]) => { ctx.beginPath(); ctx.arc(cx + ox * s, cy + oy * s, s * 0.16, 0, Math.PI * 2); ctx.fill(); });
+      break;
+    }
+    case "PINEAPPLE": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.ellipse(cx, cy + s * 0.1, s * 0.26, s * 0.36, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#854d0e"; ctx.lineWidth = s * 0.04;
+      for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(cx - s * 0.26, cy + i * s * 0.18 + s * 0.1); ctx.lineTo(cx + s * 0.26, cy + i * s * 0.18 + s * 0.1 - s * 0.1); ctx.stroke(); }
+      ctx.fillStyle = "#16a34a";
+      ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.26); ctx.lineTo(cx - s * 0.1, cy - s * 0.55); ctx.lineTo(cx + s * 0.05, cy - s * 0.3); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.26); ctx.lineTo(cx + s * 0.1, cy - s * 0.55); ctx.lineTo(cx - s * 0.05, cy - s * 0.3); ctx.closePath(); ctx.fill();
+      break;
+    }
+    case "SLOT": case "TROPHY": {
+      ctx.fillStyle = color;
+      roundRect(ctx, cx - s * 0.32, cy - s * 0.3, s * 0.64, s * 0.5, s * 0.08); ctx.fill();
+      ctx.fillStyle = "#1f2937";
+      ctx.beginPath(); ctx.arc(cx - s * 0.16, cy - s * 0.05, s * 0.08, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy - s * 0.05, s * 0.08, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + s * 0.16, cy - s * 0.05, s * 0.08, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "DICE": {
+      ctx.fillStyle = color;
+      roundRect(ctx, cx - s * 0.3, cy - s * 0.3, s * 0.6, s * 0.6, s * 0.1); ctx.fill();
+      ctx.strokeStyle = "#7f1d1d"; ctx.lineWidth = s * 0.04;
+      roundRect(ctx, cx - s * 0.3, cy - s * 0.3, s * 0.6, s * 0.6, s * 0.1); ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      const pips = [[-0.15,-0.15],[0.15,-0.15],[-0.15,0.15],[0.15,0.15],[0,0]];
+      pips.forEach(([ox, oy]) => { ctx.beginPath(); ctx.arc(cx + ox * s, cy + oy * s, s * 0.055, 0, Math.PI * 2); ctx.fill(); });
+      break;
+    }
+    case "CARD": case "TICKET": {
+      ctx.fillStyle = color;
+      roundRect(ctx, cx - s * 0.28, cy - s * 0.36, s * 0.56, s * 0.72, s * 0.06); ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.2)"; ctx.lineWidth = s * 0.03;
+      roundRect(ctx, cx - s * 0.28, cy - s * 0.36, s * 0.56, s * 0.72, s * 0.06); ctx.stroke();
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.13, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "CLUB": case "BILLIARD": {
+      ctx.fillStyle = "#1f2937";
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.38, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.font = `bold ${Math.floor(s * 0.42)}px Arial`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("8", cx, cy); ctx.textBaseline = "alphabetic";
+      ctx.strokeStyle = color; ctx.lineWidth = s * 0.05;
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.38, 0, Math.PI * 2); ctx.stroke();
+      break;
+    }
+    case "CHIP": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.36, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = s * 0.05; ctx.setLineDash([s * 0.08, s * 0.06]);
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.28, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.12, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "TARGET": {
+      ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(cx, cy, s * 0.38, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, cy, s * 0.28, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(cx, cy, s * 0.16, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, cy, s * 0.06, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "BOWLING": case "TENT": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.45); ctx.lineTo(cx + s * 0.38, cy + s * 0.3); ctx.lineTo(cx - s * 0.38, cy + s * 0.3); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.45); ctx.lineTo(cx + s * 0.1, cy + s * 0.3); ctx.lineTo(cx - s * 0.1, cy + s * 0.3); ctx.closePath(); ctx.fill();
+      break;
+    }
+    case "CONTROLLER": case "JOYSTICK": {
+      ctx.fillStyle = color;
+      roundRect(ctx, cx - s * 0.4, cy - s * 0.18, s * 0.8, s * 0.36, s * 0.18); ctx.fill();
+      ctx.fillStyle = "#1f2937";
+      ctx.beginPath(); ctx.arc(cx - s * 0.2, cy, s * 0.08, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + s * 0.2, cy - s * 0.06, s * 0.06, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + s * 0.32, cy + s * 0.02, s * 0.06, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "MASK": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.ellipse(cx - s * 0.16, cy, s * 0.22, s * 0.28, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + s * 0.16, cy, s * 0.22, s * 0.28, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#1f2937";
+      ctx.beginPath(); ctx.ellipse(cx - s * 0.16, cy, s * 0.08, s * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + s * 0.16, cy, s * 0.08, s * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "EARTH": {
+      ctx.fillStyle = "#3b82f6"; ctx.beginPath(); ctx.arc(cx, cy, s * 0.38, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#22c55e";
+      ctx.beginPath(); ctx.ellipse(cx - s * 0.1, cy - s * 0.1, s * 0.16, s * 0.12, 0.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + s * 0.14, cy + s * 0.14, s * 0.13, s * 0.1, -0.3, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "MOON": case "NEWMOON": case "FULLMOON": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.36, 0, Math.PI * 2); ctx.fill();
+      if (symbol !== "FULLMOON") {
+        ctx.fillStyle = "#0e0c1f";
+        ctx.beginPath(); ctx.arc(cx + s * 0.16, cy - s * 0.05, s * 0.3, 0, Math.PI * 2); ctx.fill();
+      }
+      break;
+    }
+    case "STAR": case "SPARKLE": case "GLOW": {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const angle = (i * Math.PI) / 5 - Math.PI / 2;
+        const r = i % 2 === 0 ? s * 0.4 : s * 0.16;
+        const px = cx + Math.cos(angle) * r, py = cy + Math.sin(angle) * r;
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.closePath(); ctx.fill();
+      break;
+    }
+    case "SUN": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.24, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = color; ctx.lineWidth = s * 0.06;
+      for (let i = 0; i < 8; i++) {
+        const a = (i * Math.PI) / 4;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * s * 0.32, cy + Math.sin(a) * s * 0.32);
+        ctx.lineTo(cx + Math.cos(a) * s * 0.46, cy + Math.sin(a) * s * 0.46);
+        ctx.stroke();
+      }
+      break;
+    }
+    case "SATURN": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.26, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = color; ctx.lineWidth = s * 0.06;
+      ctx.beginPath(); ctx.ellipse(cx, cy, s * 0.42, s * 0.14, -0.3, 0, Math.PI * 2); ctx.stroke();
+      break;
+    }
+    case "COMET": case "GALAXY": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(cx - s * 0.15, cy - s * 0.15, s * 0.16, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = color + "99"; ctx.lineWidth = s * 0.1; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(cx - s * 0.15, cy - s * 0.15); ctx.lineTo(cx + s * 0.3, cy + s * 0.3); ctx.stroke();
+      break;
+    }
+    case "ROCKET": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.45); ctx.quadraticCurveTo(cx + s * 0.2, cy - s * 0.1, cx + s * 0.16, cy + s * 0.3); ctx.lineTo(cx - s * 0.16, cy + s * 0.3); ctx.quadraticCurveTo(cx - s * 0.2, cy - s * 0.1, cx, cy - s * 0.45); ctx.fill();
+      ctx.fillStyle = "#fbbf24";
+      ctx.beginPath(); ctx.moveTo(cx - s * 0.16, cy + s * 0.3); ctx.lineTo(cx - s * 0.3, cy + s * 0.45); ctx.lineTo(cx - s * 0.1, cy + s * 0.35); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(cx + s * 0.16, cy + s * 0.3); ctx.lineTo(cx + s * 0.3, cy + s * 0.45); ctx.lineTo(cx + s * 0.1, cy + s * 0.35); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#60a5fa";
+      ctx.beginPath(); ctx.arc(cx, cy - s * 0.1, s * 0.09, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case "UFO": {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.ellipse(cx, cy + s * 0.05, s * 0.4, s * 0.14, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#a7f3d0";
+      ctx.beginPath(); ctx.arc(cx, cy - s * 0.08, s * 0.2, Math.PI, 0); ctx.fill();
+      break;
+    }
+    case "SATELLITE": {
+      ctx.fillStyle = color;
+      roundRect(ctx, cx - s * 0.12, cy - s * 0.12, s * 0.24, s * 0.24, s * 0.04); ctx.fill();
+      ctx.fillStyle = "#60a5fa";
+      roundRect(ctx, cx - s * 0.4, cy - s * 0.08, s * 0.22, s * 0.16, s * 0.02); ctx.fill();
+      roundRect(ctx, cx + s * 0.18, cy - s * 0.08, s * 0.22, s * 0.16, s * 0.02); ctx.fill();
+      break;
+    }
+    default: {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(cx, cy, s * 0.35, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+async function generateBoardImage({ game, username, avatarImg, lastFlipped, lastMatch, lastMiss, player2Name }) {
   const cols  = game.cols;
   const rows  = Math.ceil(game.board.length / cols);
   const CELL  = 88, GUTTER = 10, PAD_L = 50, PAD_T = 180;
@@ -345,8 +602,11 @@ async function generateBoardImage({ game, username, avatarUrl, lastFlipped, last
 
   const ax = W - 50, ay = 44;
   ctx.save(); ctx.beginPath(); ctx.arc(ax, ay, 28, 0, Math.PI * 2); ctx.clip();
-  try { const avatar = await loadImage(avatarUrl); ctx.drawImage(avatar, ax - 28, ay - 28, 56, 56); }
-  catch { ctx.fillStyle = "#1a1040"; ctx.fill(); }
+  if (avatarImg) {
+    ctx.drawImage(avatarImg, ax - 28, ay - 28, 56, 56);
+  } else {
+    ctx.fillStyle = "#1a1040"; ctx.fill();
+  }
   ctx.restore();
   ctx.beginPath(); ctx.arc(ax, ay, 29, 0, Math.PI * 2); ctx.strokeStyle = diffColor; ctx.lineWidth = 2.5; ctx.stroke();
   ctx.font = "9px Arial"; ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.textAlign = "center";
@@ -395,14 +655,14 @@ async function generateBoardImage({ game, username, avatarUrl, lastFlipped, last
     const isFlipped  = lastFlipped?.includes(idx);
     const isMatchNow = lastMatch?.includes(idx);
     const isMissNow  = lastMiss?.includes(idx);
-    const emoji      = game.board[idx];
-    const emojiGlow  = getEmojiGlow(emoji);
+    const symbol     = game.board[idx];
+    const symColor   = getSymbolColor(symbol);
 
     let strokeColor, strokeW, gradTop, gradBot;
-    if (isMatched)      { strokeColor = emojiGlow;  strokeW = 2.5; gradTop = "#0d2e1a"; gradBot = "#061410"; }
-    else if (isMatchNow){ strokeColor = "#34d399";  strokeW = 3.5; gradTop = "#0d3020"; gradBot = "#061a10"; }
-    else if (isMissNow) { strokeColor = "#ef4444";  strokeW = 3;   gradTop = "#2e0d0d"; gradBot = "#1a0606"; }
-    else if (isFlipped) { strokeColor = emojiGlow;  strokeW = 3;   gradTop = "#1a1040"; gradBot = "#0d0820"; }
+    if (isMatched)      { strokeColor = symColor;  strokeW = 2.5; gradTop = "#0d2e1a"; gradBot = "#061410"; }
+    else if (isMatchNow){ strokeColor = "#34d399"; strokeW = 3.5; gradTop = "#0d3020"; gradBot = "#061a10"; }
+    else if (isMissNow) { strokeColor = "#ef4444"; strokeW = 3;   gradTop = "#2e0d0d"; gradBot = "#1a0606"; }
+    else if (isFlipped) { strokeColor = symColor;  strokeW = 3;   gradTop = "#1a1040"; gradBot = "#0d0820"; }
     else                { strokeColor = diffColor + "44"; strokeW = 1.5; gradTop = "#110f30"; gradBot = "#08061a"; }
 
     const cellG = ctx.createLinearGradient(cx, cy, cx, cy + CELL);
@@ -412,16 +672,12 @@ async function generateBoardImage({ game, username, avatarUrl, lastFlipped, last
     ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeW; ctx.stroke();
 
     if (isMatched || isFlipped || isMatchNow || isMissNow) {
-      const glowColor = isMatchNow ? "#34d399" : isMissNow ? "#ef4444" : emojiGlow;
+      const glowColor = isMatchNow ? "#34d399" : isMissNow ? "#ef4444" : symColor;
       const radGlow = ctx.createRadialGradient(cx + CELL / 2, cy + CELL / 2, 4, cx + CELL / 2, cy + CELL / 2, CELL * 0.52);
       radGlow.addColorStop(0, glowColor + "40"); radGlow.addColorStop(0.5, glowColor + "18"); radGlow.addColorStop(1, "transparent");
       ctx.fillStyle = radGlow; roundRect(ctx, cx + 2, cy + 2, CELL - 4, CELL - 4, 11); ctx.fill();
 
-      ctx.shadowColor = isMatchNow ? "#34d399" : isMissNow ? "#ef4444" : emojiGlow;
-      ctx.shadowBlur  = isMatchNow ? 28 : isMissNow ? 20 : isMatched ? 22 : 18;
-      ctx.font = "44px Arial"; ctx.textAlign = "center"; ctx.fillStyle = "#ffffff";
-      ctx.fillText(emoji, cx + CELL / 2, cy + CELL / 2 + 18);
-      ctx.shadowBlur = 0; ctx.textAlign = "left";
+      drawSymbolIcon(ctx, symbol, cx + CELL / 2, cy + CELL / 2 + 4, CELL * 0.36, true);
     } else {
       const hiddenBg = ctx.createRadialGradient(cx + CELL / 2, cy + CELL / 2, 2, cx + CELL / 2, cy + CELL / 2, CELL * 0.5);
       hiddenBg.addColorStop(0, diffColor + "18"); hiddenBg.addColorStop(1, "transparent");
@@ -437,20 +693,34 @@ async function generateBoardImage({ game, username, avatarUrl, lastFlipped, last
   ctx.fillText("Type: A1 B3  or  A1", W / 2, footerY + 24); ctx.textAlign = "left";
 
   ctx.font = "8px Arial"; ctx.fillStyle = diffColor + "44"; ctx.textAlign = "center";
-  ctx.fillText("HEDGEHOG MEMORY v6.0", W / 2, H - 14); ctx.textAlign = "left";
+  ctx.fillText("HEDGEHOG MEMORY v7.0", W / 2, H - 14); ctx.textAlign = "left";
 
   return canvas.toBuffer("image/png");
 }
 
-async function sendBoard(message, game, username, avatarUrl, lastFlipped, lastMatch, lastMiss, bodyLines, player2Name) {
+async function sendBoardTo(sender, threadId, game, username, avatarImg, lastFlipped, lastMatch, lastMiss, bodyLines, player2Name) {
   const body = UI(bodyLines);
   try {
-    const img = await generateBoardImage({ game, username, avatarUrl, lastFlipped, lastMatch, lastMiss, player2Name });
+    const img = await generateBoardImage({ game, username, avatarImg, lastFlipped, lastMatch, lastMiss, player2Name });
     const p   = `./memory_board_${game.uid}_${Date.now()}.png`;
     fs.writeFileSync(p, img);
-    await message.reply({ body, attachment: fs.createReadStream(p) });
+    await sender(body, threadId, p);
     fs.unlinkSync(p);
-  } catch { await message.reply(body); }
+  } catch { await sender(body, threadId, null); }
+}
+
+function makeReplySender(message) {
+  return async (body, _threadId, imgPath) => {
+    if (imgPath) await message.reply({ body, attachment: fs.createReadStream(imgPath) });
+    else await message.reply(body);
+  };
+}
+
+function makeApiSender(api) {
+  return async (body, threadId, imgPath) => {
+    if (imgPath) await api.sendMessage({ body, attachment: fs.createReadStream(imgPath) }, threadId);
+    else await api.sendMessage(body, threadId);
+  };
 }
 
 function clearGameTimeout(uid) {
@@ -467,15 +737,24 @@ function removeGame(uid, partnerId) {
   saveGames(); saveMPGames(); saveOnlineGames();
 }
 
-async function endGame(uid, message, api, win) {
-  const game = activeGames.get(uid) || mpGames.get(uid) || onlineGames.get(uid);
+function findOnlineGame(uid) {
+  for (const [id, g] of onlineGames) {
+    if (g.uid === uid || g.partnerId === uid) return { id, game: g };
+  }
+  return null;
+}
+
+async function endGame(uid, sender, threadId, api, win) {
+  const fromActive = activeGames.get(uid);
+  const fromMP     = mpGames.get(uid);
+  const onlineHit  = findOnlineGame(uid);
+  const game       = fromActive || fromMP || onlineHit?.game;
   if (!game) return;
 
   clearGameTimeout(uid);
   if (game.partnerId) clearGameTimeout(game.partnerId);
-  
-  // Get partner's thread if online
-  const partnerThread = game.isOnline ? game.partnerThread : null;
+
+  const partnerThread = game.isOnline ? game.partnerThreadId : null;
   removeGame(uid, game.partnerId);
 
   const diff       = game.difficulty && DIFFICULTIES[game.difficulty] ? DIFFICULTIES[game.difficulty] : MP_CONFIG;
@@ -499,56 +778,59 @@ async function endGame(uid, message, api, win) {
       await updateUserCash(game.partnerId, half);
       const fEarned = await formatNumber(half);
       const fNewU   = await formatNumber(await getUserCash(uid));
-      const fNewP   = await formatNumber(await getUserCash(game.partnerId));
-      
-      const msg = UI([
+
+      await sender(UI([
         "WIN! (50/50 split)", "---",
         `+${fEarned}$ each`,
         `Your balance: ${fNewU}$`,
-        `Partner balance: ${fNewP}$`,
         `Multiplier: x${finalMult}${speedBonus ? " (speed bonus)" : ""}`
-      ]);
-      
-      await message.reply(msg);
-      if (game.isOnline && partnerThread) {
-        const partnerMsg = await message.reply(msg);
-        // Send to partner's thread if needed
+      ]), threadId, null);
+
+      if (game.isOnline && partnerThread && api) {
+        const fNewP = await formatNumber(await getUserCash(game.partnerId));
+        try {
+          await api.sendMessage(UI([
+            "WIN! (50/50 split)", "---",
+            `+${fEarned}$ each`,
+            `Your balance: ${fNewP}$`,
+            `Multiplier: x${finalMult}${speedBonus ? " (speed bonus)" : ""}`
+          ]), partnerThread);
+        } catch {}
       }
     } else {
       await updateUserCash(uid, earned);
       const fEarned = await formatNumber(earned);
       const fNew    = await formatNumber(await getUserCash(uid));
-      await message.reply(UI([
+      await sender(UI([
         "VICTORY!", "---",
         `+${fEarned}$ (x${finalMult})${speedBonus ? " — speed bonus!" : ""}`,
         `Balance: ${fNew}$`,
         `Accuracy: ${accuracy}% | Time: ${timeStr(timeTaken)}`
-      ]));
+      ]), threadId, null);
     }
   } else {
     if (game.isMultiplayer || game.isOnline) {
       const fNew = await formatNumber(await getUserCash(uid));
-      await message.reply(UI([
-        "TIME'S UP (50/50 lost)", "---",
-        `-${game.betFormatted}$`,
-        `Balance: ${fNew}$`
-      ]));
+      await sender(UI(["TIME'S UP (50/50 lost)", "---", `-${game.betFormatted}$`, `Balance: ${fNew}$`]), threadId, null);
+      if (game.isOnline && partnerThread && api) {
+        try { await api.sendMessage(UI(["TIME'S UP (50/50 lost)", "---", `-${game.betFormatted}$`]), partnerThread); } catch {}
+      }
     } else {
       const fNew = await formatNumber(await getUserCash(uid));
-      await message.reply(UI([
+      await sender(UI([
         "TIME'S UP!", "---",
         `-${game.betFormatted}$`,
         `Balance: ${fNew}$`,
         `Pairs found: ${game.matched}/${game.totalPairs}`
-      ]));
+      ]), threadId, null);
     }
   }
 }
 
-async function processMove(coord1, coord2, game, uid, message, api) {
+async function processMove(coord1, coord2, game, uid, sender, threadId, api) {
   game.attempts++;
   const isMatch = game.board[coord1.index] === game.board[coord2.index];
-  const [username, avatarUrl] = await Promise.all([getUserName(uid, api), getUserAvatar(uid, api)]);
+  const [username, avatarImg] = await Promise.all([getUserName(uid, api), loadAvatarBuffer(uid, api)]);
   const arg1Str = `${String.fromCharCode(65 + coord1.col)}${coord1.row + 1}`;
   const arg2Str = `${String.fromCharCode(65 + coord2.col)}${coord2.row + 1}`;
 
@@ -558,7 +840,7 @@ async function processMove(coord1, coord2, game, uid, message, api) {
     game.matched++;
 
     if ((game.isMultiplayer || game.isOnline) && game.partnerId) {
-      const partnerGame = activeGames.get(game.partnerId) || onlineGames.get(game.partnerId);
+      const partnerGame = activeGames.get(game.partnerId) || findOnlineGame(game.partnerId)?.game;
       if (partnerGame) {
         partnerGame.revealed[coord1.index] = true;
         partnerGame.revealed[coord2.index] = true;
@@ -569,25 +851,28 @@ async function processMove(coord1, coord2, game, uid, message, api) {
     saveGames(); saveMPGames(); saveOnlineGames();
 
     if (game.matched >= game.totalPairs) {
-      await sendBoard(message, game, username, avatarUrl, [coord1.index, coord2.index], [coord1.index, coord2.index], [],
+      await sendBoardTo(sender, threadId, game, username, avatarImg, [coord1.index, coord2.index], [coord1.index, coord2.index], [],
         [`MATCH! ${game.board[coord1.index]}`, `${arg1Str} & ${arg2Str}`, "ALL PAIRS FOUND!"], game.player2Name);
-      return endGame(uid, message, api, true);
+      return endGame(uid, sender, threadId, api, true);
     }
 
-    await sendBoard(message, game, username, avatarUrl, [coord1.index, coord2.index], [coord1.index, coord2.index], [],
+    await sendBoardTo(sender, threadId, game, username, avatarImg, [coord1.index, coord2.index], [coord1.index, coord2.index], [],
       [`MATCH! ${game.board[coord1.index]}`, `${arg1Str} & ${arg2Str}`, `Pairs: ${game.matched}/${game.totalPairs}`], game.player2Name);
   } else {
-    await sendBoard(message, game, username, avatarUrl, [coord1.index, coord2.index], [], [coord1.index, coord2.index],
+    await sendBoardTo(sender, threadId, game, username, avatarImg, [coord1.index, coord2.index], [], [coord1.index, coord2.index],
       [`No match`, `${arg1Str} ≠ ${arg2Str}`, `Pairs: ${game.matched}/${game.totalPairs}`], game.player2Name);
   }
 }
 
-async function handleCoords(uid, rawArg0, rawArg1, message, api) {
-  const game = activeGames.get(uid) || onlineGames.get(uid);
+async function handleCoords(uid, rawArg0, rawArg1, message, event, api) {
+  const game = activeGames.get(uid);
   if (!game) return false;
 
+  const threadId = game.isOnline ? game.threadId : event.threadID;
+  const sender   = game.isOnline && game.threadId !== event.threadID ? makeApiSender(api) : makeReplySender(message);
+
   const elapsed = Math.floor((Date.now() - game.startTime) / 1000);
-  if (elapsed >= TIME_LIMIT) { await endGame(uid, message, api, false); return true; }
+  if (elapsed >= TIME_LIMIT) { await endGame(uid, sender, threadId, api, false); return true; }
 
   const rows   = Math.ceil(game.board.length / game.cols);
   const coord1 = parseCoord(rawArg0, game.cols, rows);
@@ -599,49 +884,49 @@ async function handleCoords(uid, rawArg0, rawArg1, message, api) {
       const c1 = { index: game.firstCard, row: Math.floor(game.firstCard / game.cols), col: game.firstCard % game.cols };
       if (game.revealed[c1.index] || game.revealed[coord1.index]) {
         game.firstCard = null;
-        await message.reply(UI(["Already found!"]));
+        await sender(UI(["Already found!"]), threadId, null);
         return true;
       }
       game.firstCard = null;
-      await processMove(c1, coord1, game, uid, message, api);
+      await processMove(c1, coord1, game, uid, sender, threadId, api);
       return true;
     }
-    if (game.revealed[coord1.index]) { await message.reply(UI(["Already found!"])); return true; }
+    if (game.revealed[coord1.index]) { await sender(UI(["Already found!"]), threadId, null); return true; }
     game.firstCard = coord1.index;
     saveGames(); saveOnlineGames();
-    const [username, avatarUrl] = await Promise.all([getUserName(uid, api), getUserAvatar(uid, api)]);
-    await sendBoard(message, game, username, avatarUrl, [coord1.index], [], [],
+    const [username, avatarImg] = await Promise.all([getUserName(uid, api), loadAvatarBuffer(uid, api)]);
+    await sendBoardTo(sender, threadId, game, username, avatarImg, [coord1.index], [], [],
       [`${rawArg0.toUpperCase()} → ${game.board[coord1.index]}`, "Choose 2nd card"], game.player2Name);
     return true;
   }
 
-  if (coord1.index === coord2.index) { await message.reply(UI(["Pick two different cards!"])); return true; }
-  if (game.revealed[coord1.index] || game.revealed[coord2.index]) { await message.reply(UI(["Already found!"])); return true; }
+  if (coord1.index === coord2.index) { await sender(UI(["Pick two different cards!"]), threadId, null); return true; }
+  if (game.revealed[coord1.index] || game.revealed[coord2.index]) { await sender(UI(["Already found!"]), threadId, null); return true; }
   game.firstCard = null;
-  await processMove(coord1, coord2, game, uid, message, api);
+  await processMove(coord1, coord2, game, uid, sender, threadId, api);
   return true;
 }
 
 module.exports = {
   config: {
     name:             "memory",
-    version:          "6.0",
+    version:          "7.0",
     author:           "Ismael03-Dev",
     countDown:        2,
     role:             0,
     category:         "fun",
-    shortDescription: { en: "Memory Game — Solo, Multi & Online" }
+    shortDescription: { en: "Memory Game — Solo, Multi & Online (geometric icons)" }
   },
 
   onStart: async function ({ args, message, event, api }) {
-    const uid = String(event.senderID);
+    const uid      = String(event.senderID);
     const threadId = String(event.threadID);
-    const p   = global.utils.getPrefix(event.threadID);
-    const sub = args[0]?.toLowerCase();
+    const p        = global.utils.getPrefix(event.threadID);
+    const sub      = args[0]?.toLowerCase();
 
     if (!sub || sub === "help") {
       return message.reply(UI([
-        "MEMORY v6.0", "---",
+        "MEMORY v7.0", "---",
         `${p}memory start <bet> [diff] [theme]`,
         `${p}memory multi @user`,
         `${p}memory online <user_id> <group_id>`,
@@ -651,13 +936,12 @@ module.exports = {
         "Diff: facile/normal/difficile/extreme",
         "Themes: animaux/fruits/casino/espace",
         "Multi: 5x5 grid, 12 pairs, x4-x8",
-        "Online: Play across different groups!"
+        "Online: play across different groups!"
       ]));
     }
 
-    // ONLINE COMMAND
     if (sub === "online" || sub === "cross") {
-      const targetId = args[1];
+      const targetId      = args[1];
       const targetThreadId = args[2];
 
       if (!targetId || !targetThreadId) {
@@ -667,182 +951,68 @@ module.exports = {
           "Play with someone in a different group!"
         ]));
       }
-
-      if (targetId === uid) {
-        return message.reply(UI(["You can't play with yourself!"]));
-      }
-
-      // Check if target is in the same thread
+      if (targetId === uid) return message.reply(UI(["You can't play with yourself!"]));
       if (targetThreadId === threadId) {
-        return message.reply(UI([
-          "❌ Online mode is for cross-group play!",
-          "If you want to play with someone in the same group,",
-          `use: ${p}memory multi @user`
-        ]));
+        return message.reply(UI(["Online mode is for cross-group play!", `Use ${p}memory multi @user for same-group games.`]));
       }
-
-      // Check if target has a game
-      if (activeGames.has(targetId) || mpGames.has(targetId) || onlineGames.has(targetId)) {
+      if (activeGames.has(targetId) || mpGames.has(targetId) || findOnlineGame(targetId)) {
         return message.reply(UI(["That player is already in a game."]));
       }
-
-      if (onlineGames.has(uid)) {
-        return message.reply(UI(["You already have an online game in progress."]));
+      if (activeGames.has(uid) || mpGames.has(uid) || findOnlineGame(uid)) {
+        return message.reply(UI(["You already have a game or invitation in progress."]));
+      }
+      for (const [, invite] of onlineInvites) {
+        if (invite.targetId === targetId) return message.reply(UI(["This player already has a pending online invite."]));
+        if (invite.uid === uid) return message.reply(UI(["You already have a pending invite."]));
       }
 
-      // Check if there's already an invite
-      for (const [key, invite] of onlineInvites) {
-        if (invite.targetId === targetId || invite.uid === targetId) {
-          return message.reply(UI(["This player already has a pending online invite."]));
-        }
-      }
+      const inviteId    = `invite_${uid}_${Date.now()}`;
+      const inviterName = await getUserName(uid, api);
+      const targetName  = await getUserName(targetId, api);
 
-      // Create invite
-      const inviteId = `invite_${Date.now()}`;
       onlineInvites.set(inviteId, {
-        uid,
-        targetId,
-        targetThreadId,
-        threadId,
-        timestamp: Date.now(),
-        bet: null,
-        phase: "awaiting_response"
+        uid, targetId, targetThreadId, threadId,
+        inviterName, targetName,
+        timestamp: Date.now()
       });
 
-      const inviterName = await getUserName(uid, api);
-      const targetName = await getUserName(targetId, api);
-
-      // Send invite to target's group
       try {
-        const inviteMsg = `🎮 ${inviterName} wants to play Memory with you!\n\n` +
-          `Reply with "oui" to accept or "non" to decline.\n` +
-          `(This invite will expire in 60 seconds)`;
-
         await api.sendMessage(
-          { body: UI([inviteMsg]) },
+          UI([
+            `${inviterName} wants to play Memory with ${targetName}!`, "---",
+            `${targetName}, reply "oui" to accept or "non" to decline.`,
+            "(Expires in 60s — this invite is only for you)"
+          ]),
           targetThreadId
         );
-      } catch (err) {
+      } catch {
         onlineInvites.delete(inviteId);
-        return message.reply(UI([
-          "❌ Could not send invite to target's group.",
-          "Make sure the group ID is correct and the bot is in that group."
-        ]));
+        return message.reply(UI(["Could not send invite to target's group.", "Check the group ID and that the bot is present there."]));
       }
 
-      // Set timeout for invite
-      setTimeout(() => {
+      const to = setTimeout(() => {
         if (onlineInvites.has(inviteId)) {
           onlineInvites.delete(inviteId);
-          // Notify inviter
-          message.reply(UI(["⏰ Invite expired (no response)."]));
+          message.reply(UI(["Invite expired (no response)."]));
         }
-      }, 60000);
+        inviteTimeouts.delete(inviteId);
+      }, INVITE_TTL);
+      inviteTimeouts.set(inviteId, to);
 
       return message.reply(UI([
-        "✅ Invite sent!", "---",
+        "Invite sent!", "---",
         `To: ${targetName}`,
-        `Group: ${targetThreadId}`,
-        "Waiting for response... (60s timeout)"
+        "Waiting for response (60s)..."
       ]));
     }
 
-    // Handle online invite responses (oui/non)
-    if (onlineInvites.size > 0) {
-      const response = sub === "oui" ? "accept" : sub === "non" ? "decline" : null;
-      if (response) {
-        let foundInvite = null;
-        let inviteId = null;
-        for (const [id, invite] of onlineInvites) {
-          if (invite.targetId === uid) {
-            foundInvite = invite;
-            inviteId = id;
-            break;
-          }
-        }
-
-        if (foundInvite) {
-          if (response === "decline") {
-            onlineInvites.delete(inviteId);
-            await message.reply(UI(["❌ You declined the invitation."]));
-            // Notify inviter
-            try {
-              await api.sendMessage(
-                { body: UI([`${await getUserName(uid, api)} declined your invitation.`]) },
-                foundInvite.threadId
-              );
-            } catch {}
-            return;
-          }
-
-          // ACCEPT
-          onlineInvites.delete(inviteId);
-
-          // Check if both have enough cash
-          const inviterCash = await getUserCash(foundInvite.uid);
-          const targetCash = await getUserCash(uid);
-
-          // Ask for bet amount
-          await message.reply(UI([
-            "✅ Invitation accepted!", "---",
-            "Both players must now place their bet.",
-            `Type: ${p}memory onlinebet <amount>`,
-            "The bet must be the same for both players."
-          ]));
-
-          // Save pending online game
-          const gameId = `online_${foundInvite.uid}_${uid}`;
-          onlineGames.set(gameId, {
-            uid: foundInvite.uid,
-            partnerId: uid,
-            partnerThread: foundInvite.threadId,
-            playerThread: foundInvite.targetThreadId,
-            bet: 0n,
-            betFormatted: "0",
-            phase: "bet_p1",
-            startTime: Date.now(),
-            inviterName: await getUserName(foundInvite.uid, api),
-            targetName: await getUserName(uid, api)
-          });
-          saveOnlineGames();
-
-          // Notify inviter
-          try {
-            await api.sendMessage(
-              { body: UI([
-                "✅ Your invitation was accepted!",
-                "---",
-                `Both players must now place their bet.`,
-                `Type: ${p}memory onlinebet <amount>`
-              ]) },
-              foundInvite.threadId
-            );
-          } catch {}
-
-          return;
-        }
-      }
-    }
-
-    // ONLINE BET
     if (sub === "onlinebet" || sub === "obet") {
       const amount = await parseAmount(args[1]);
       if (amount <= 0n) return message.reply(UI(["Invalid amount."]));
 
-      let gameEntry = null;
-      let gameId = null;
-
-      for (const [id, g] of onlineGames) {
-        if (g.uid === uid || g.partnerId === uid) {
-          gameEntry = g;
-          gameId = id;
-          break;
-        }
-      }
-
-      if (!gameEntry) {
-        return message.reply(UI(["No online game in progress.", `${p}memory online to start one.`]));
-      }
+      const hit = findOnlineGame(uid);
+      if (!hit) return message.reply(UI(["No online game in progress.", `${p}memory online to start one.`]));
+      const { id: gameId, game: gameEntry } = hit;
 
       const cash = await getUserCash(uid);
       if (amount > cash) return message.reply(UI(["Insufficient funds.", `Balance: ${await formatNumber(cash)}$`]));
@@ -850,26 +1020,17 @@ module.exports = {
       const isInviter = gameEntry.uid === uid;
 
       if (gameEntry.phase === "bet_p1" && isInviter) {
-        gameEntry.bet = amount;
+        gameEntry.bet          = amount;
         gameEntry.betFormatted = await formatNumber(amount);
-        gameEntry.phase = "bet_p2";
+        gameEntry.phase        = "bet_p2";
         await updateUserCash(uid, -amount);
         saveOnlineGames();
 
-        await message.reply(UI([
-          `Your bet: ${gameEntry.betFormatted}$`,
-          `Waiting for ${gameEntry.targetName} to bet...`
-        ]));
-
-        // Notify partner
+        await message.reply(UI([`Your bet: ${gameEntry.betFormatted}$`, `Waiting for ${gameEntry.targetName} to bet...`]));
         try {
           await api.sendMessage(
-            { body: UI([
-              `${gameEntry.inviterName} has placed their bet!`,
-              `Place your bet: ${p}memory onlinebet <amount>`,
-              `Must be exactly ${gameEntry.betFormatted}$`
-            ]) },
-            gameEntry.playerThread
+            UI([`${gameEntry.inviterName} placed their bet: ${gameEntry.betFormatted}$`, `Match it: ${p}memory onlinebet ${gameEntry.betFormatted}`]),
+            gameEntry.targetThreadId
           );
         } catch {}
         return;
@@ -877,109 +1038,73 @@ module.exports = {
 
       if (gameEntry.phase === "bet_p2" && !isInviter) {
         if (amount !== gameEntry.bet) {
-          // Refund inviter
           await updateUserCash(gameEntry.uid, gameEntry.bet);
           onlineGames.delete(gameId);
           saveOnlineGames();
-          await message.reply(UI([
-            "❌ Bets don't match!",
-            `Yours: ${await formatNumber(amount)}$ — Theirs: ${gameEntry.betFormatted}$`,
-            "Game cancelled, opponent refunded."
-          ]));
-          // Notify inviter
+          await message.reply(UI(["Bets don't match!", `Yours: ${await formatNumber(amount)}$ — Theirs: ${gameEntry.betFormatted}$`, "Game cancelled, opponent refunded."]));
           try {
-            await api.sendMessage(
-              { body: UI([
-                `${await getUserName(uid, api)} bet ${await formatNumber(amount)}$`,
-                `Your bet was ${gameEntry.betFormatted}$`,
-                "❌ Bets don't match! Game cancelled."
-              ]) },
-              gameEntry.threadId
-            );
+            await api.sendMessage(UI(["Bets didn't match. Game cancelled, you've been refunded."]), gameEntry.threadId);
           } catch {}
           return;
         }
 
         await updateUserCash(uid, -amount);
+        onlineGames.delete(gameId);
 
-        // Start the game
-        const theme = "animaux";
-        const board = createBoard(MP_CONFIG.cols, MP_CONFIG.pairs, theme);
+        const theme    = "animaux";
+        const board    = createBoard(MP_CONFIG.cols, MP_CONFIG.pairs, theme);
         const revealed = new Array(board.length).fill(false);
 
         const baseGame = {
-          difficulty: "online",
-          theme,
-          board,
-          cols: MP_CONFIG.cols,
-          totalPairs: MP_CONFIG.pairs,
-          revealed,
-          attempts: 0,
-          matched: 0,
-          hintPenalty: 0,
-          startTime: Date.now(),
-          bet: gameEntry.bet,
-          betFormatted: gameEntry.betFormatted,
-          firstCard: null,
-          isMultiplayer: true,
-          isOnline: true
+          difficulty: "online", theme, board, cols: MP_CONFIG.cols,
+          totalPairs: MP_CONFIG.pairs, revealed, attempts: 0, matched: 0,
+          hintPenalty: 0, startTime: Date.now(),
+          bet: gameEntry.bet, betFormatted: gameEntry.betFormatted,
+          firstCard: null, isMultiplayer: true, isOnline: true
         };
 
-        const gameP1 = {
-          ...baseGame,
-          uid: gameEntry.uid,
-          partnerId: uid,
+        const gameInviter = {
+          ...baseGame, uid: gameEntry.uid, partnerId: uid,
           player2Name: gameEntry.targetName,
-          partnerThread: gameEntry.playerThread,
-          threadId: gameEntry.threadId
+          threadId: gameEntry.threadId, partnerThreadId: gameEntry.targetThreadId
         };
-        const gameP2 = {
-          ...baseGame,
-          uid,
-          partnerId: gameEntry.uid,
+        const gameTarget = {
+          ...baseGame, uid, partnerId: gameEntry.uid,
           player2Name: gameEntry.inviterName,
-          partnerThread: gameEntry.threadId,
-          threadId: gameEntry.playerThread
+          threadId: gameEntry.targetThreadId, partnerThreadId: gameEntry.threadId
         };
 
-        onlineGames.set(gameId, gameP1);
-        onlineGames.set(`online_${uid}_${gameEntry.uid}`, gameP2);
-        onlineGames.delete(gameId);
-        saveOnlineGames();
+        activeGames.set(gameEntry.uid, gameInviter);
+        activeGames.set(uid, gameTarget);
+        saveGames(); saveOnlineGames();
 
-        const [uav1, uav2] = await Promise.all([
-          getUserAvatar(gameEntry.uid, api),
-          getUserAvatar(uid, api)
+        const [avInviter, avTarget] = await Promise.all([
+          loadAvatarBuffer(gameEntry.uid, api),
+          loadAvatarBuffer(uid, api)
         ]);
 
-        await sendBoard(message, gameP2, await getUserName(uid, api), uav2, [], [], [],
-          ["ONLINE GAME STARTED!", "---", `5x5 grid • ${MP_CONFIG.pairs} pairs`, `Bet: ${gameEntry.betFormatted}$ each`, `VS: ${gameEntry.inviterName}`]
+        await sendBoardTo(makeReplySender(message), gameEntry.targetThreadId, gameTarget, gameEntry.targetName, avTarget, [], [], [],
+          ["ONLINE GAME STARTED!", "---", `5x5 grid • ${MP_CONFIG.pairs} pairs`, `Bet: ${gameEntry.betFormatted}$ each`, `VS: ${gameEntry.inviterName}`],
+          gameEntry.inviterName
         );
 
-        // Send to inviter's thread
         try {
-          await sendBoard(
-            { reply: (msg) => api.sendMessage({ body: msg }, gameEntry.threadId) },
-            gameP1,
-            await getUserName(gameEntry.uid, api),
-            uav1,
-            [], [], [],
-            ["ONLINE GAME STARTED!", "---", `5x5 grid • ${MP_CONFIG.pairs} pairs`, `Bet: ${gameEntry.betFormatted}$ each`, `VS: ${gameEntry.targetName}`]
+          await sendBoardTo(makeApiSender(api), gameEntry.threadId, gameInviter, gameEntry.inviterName, avInviter, [], [], [],
+            ["ONLINE GAME STARTED!", "---", `5x5 grid • ${MP_CONFIG.pairs} pairs`, `Bet: ${gameEntry.betFormatted}$ each`, `VS: ${gameEntry.targetName}`],
+            gameEntry.targetName
           );
         } catch {}
 
-        const timeoutP1 = setTimeout(() => endGame(gameEntry.uid, message, api, false), TIME_LIMIT * 1000);
-        gameTimeouts.set(gameEntry.uid, timeoutP1);
-        const timeoutP2 = setTimeout(() => endGame(uid, message, api, false), TIME_LIMIT * 1000);
-        gameTimeouts.set(uid, timeoutP2);
-
+        const sender1 = makeApiSender(api);
+        const sender2 = makeReplySender(message);
+        gameTimeouts.set(gameEntry.uid, setTimeout(() => endGame(gameEntry.uid, sender1, gameEntry.threadId, api, false), TIME_LIMIT * 1000));
+        gameTimeouts.set(uid, setTimeout(() => endGame(uid, sender2, gameEntry.targetThreadId, api, false), TIME_LIMIT * 1000));
         return;
       }
 
       return message.reply(UI(["Not your turn to bet."]));
     }
 
-    // MULTI COMMAND (same group)
     if (sub === "multi" || sub === "multiplayer" || sub === "duo") {
       const targetId = Object.keys(event.mentions || {})[0] || args[1];
       if (!targetId || targetId === uid)
@@ -1005,25 +1130,18 @@ module.exports = {
       ]));
     }
 
-    // Regular bet (for multiplayer)
     if (sub === "bet") {
       const amount = await parseAmount(args[1]);
       if (amount <= 0n) return message.reply(UI(["Invalid amount."]));
 
-      let pendingEntry = null;
-      let isInitiator  = false;
+      let pendingEntry = null, isInitiator = false;
 
-      if (mpGames.has(uid)) {
-        pendingEntry = mpGames.get(uid);
-        isInitiator  = true;
-      } else {
-        for (const [, g] of mpGames) {
-          if (g.targetId === uid) { pendingEntry = g; isInitiator = false; break; }
-        }
+      if (mpGames.has(uid)) { pendingEntry = mpGames.get(uid); isInitiator = true; }
+      else {
+        for (const [, g] of mpGames) { if (g.targetId === uid) { pendingEntry = g; isInitiator = false; break; } }
       }
 
-      if (!pendingEntry)
-        return message.reply(UI(["No pending multiplayer invitation.", `${p}memory multi @user to start one.`]));
+      if (!pendingEntry) return message.reply(UI(["No pending multiplayer invitation.", `${p}memory multi @user to start one.`]));
 
       const cash = await getUserCash(uid);
       if (amount > cash) return message.reply(UI(["Insufficient funds.", `Balance: ${await formatNumber(cash)}$`]));
@@ -1039,10 +1157,7 @@ module.exports = {
         await updateUserCash(uid, -amount);
 
         const targetName = await getUserName(pendingEntry.targetId, api);
-        return message.reply(UI([
-          `Your bet: ${pendingEntry.betFormatted}$`,
-          `Waiting for ${targetName} to bet the same amount...`
-        ]));
+        return message.reply(UI([`Your bet: ${pendingEntry.betFormatted}$`, `Waiting for ${targetName} to bet the same amount...`]));
       }
 
       if (pendingEntry.phase !== "bet_p2")
@@ -1052,23 +1167,16 @@ module.exports = {
         await updateUserCash(pendingEntry.uid, pendingEntry.bet);
         mpGames.delete(pendingEntry.uid);
         saveMPGames();
-        return message.reply(UI([
-          "Bets don't match!",
-          `Yours: ${await formatNumber(amount)}$ — Theirs: ${pendingEntry.betFormatted}$`,
-          "Game cancelled, opponent refunded."
-        ]));
+        return message.reply(UI(["Bets don't match!", `Yours: ${await formatNumber(amount)}$ — Theirs: ${pendingEntry.betFormatted}$`, "Game cancelled, opponent refunded."]));
       }
 
       await updateUserCash(uid, -amount);
 
-      const theme = "animaux";
-      const board = createBoard(MP_CONFIG.cols, MP_CONFIG.pairs, theme);
+      const theme    = "animaux";
+      const board    = createBoard(MP_CONFIG.cols, MP_CONFIG.pairs, theme);
       const revealed = new Array(board.length).fill(false);
 
-      const [p1Name, p2Name] = await Promise.all([
-        getUserName(pendingEntry.uid, api),
-        getUserName(uid, api)
-      ]);
+      const [p1Name, p2Name] = await Promise.all([getUserName(pendingEntry.uid, api), getUserName(uid, api)]);
 
       const baseGame = {
         difficulty: "multiplayer", theme, board, cols: MP_CONFIG.cols,
@@ -1086,21 +1194,18 @@ module.exports = {
       mpGames.delete(pendingEntry.uid);
       saveGames(); saveMPGames();
 
-      const [uav1] = await Promise.all([getUserAvatar(pendingEntry.uid, api)]);
-      await sendBoard(message, gameP1, p1Name, uav1, [], [], [],
+      const uav1 = await loadAvatarBuffer(pendingEntry.uid, api);
+      await sendBoardTo(makeReplySender(message), threadId, gameP1, p1Name, uav1, [], [], [],
         ["MULTIPLAYER STARTED!", "---", `5x5 grid • ${MP_CONFIG.pairs} pairs`, `Bet: ${pendingEntry.betFormatted}$ each`, `Speed bonus: <${timeStr(MP_CONFIG.bonusSpeed)} → x${MP_CONFIG.bonusMult}`],
         p2Name
       );
 
-      const timeoutP1 = setTimeout(() => endGame(pendingEntry.uid, message, api, false), TIME_LIMIT * 1000);
-      gameTimeouts.set(pendingEntry.uid, timeoutP1);
-      const timeoutP2 = setTimeout(() => endGame(uid, message, api, false), TIME_LIMIT * 1000);
-      gameTimeouts.set(uid, timeoutP2);
-
+      const sender = makeReplySender(message);
+      gameTimeouts.set(pendingEntry.uid, setTimeout(() => endGame(pendingEntry.uid, sender, threadId, api, false), TIME_LIMIT * 1000));
+      gameTimeouts.set(uid, setTimeout(() => endGame(uid, sender, threadId, api, false), TIME_LIMIT * 1000));
       return;
     }
 
-    // Regular solo game
     if (sub === "start" || sub === "jouer" || sub === "play") {
       if (activeGames.has(uid)) return message.reply(UI(["Game already in progress."]));
       if (mpGames.has(uid)) return message.reply(UI(["You have a pending multiplayer invitation. Finish or abandon it first."]));
@@ -1121,24 +1226,23 @@ module.exports = {
         uid, difficulty, theme, board, cols: diff.cols, totalPairs: diff.pairs,
         revealed: new Array(board.length).fill(false), attempts: 0, matched: 0,
         hintPenalty: 0, startTime: Date.now(), bet, betFormatted: await formatNumber(bet),
-        firstCard: null, isMultiplayer: false
+        firstCard: null, isMultiplayer: false, threadId
       };
       activeGames.set(uid, game);
       saveGames();
 
-      const [uname, uav] = await Promise.all([getUserName(uid, api), getUserAvatar(uid, api)]);
-      await sendBoard(message, game, uname, uav, [], [], [],
+      const [uname, uav] = await Promise.all([getUserName(uid, api), loadAvatarBuffer(uid, api)]);
+      await sendBoardTo(makeReplySender(message), threadId, game, uname, uav, [], [], [],
         ["SOLO GAME", "---", `${difficulty} • ${theme}`, `Pairs: ${diff.pairs}`, `Bet: ${game.betFormatted}$`]
       );
 
-      const timeout = setTimeout(() => endGame(uid, message, api, false), TIME_LIMIT * 1000);
-      gameTimeouts.set(uid, timeout);
+      const sender = makeReplySender(message);
+      gameTimeouts.set(uid, setTimeout(() => endGame(uid, sender, threadId, api, false), TIME_LIMIT * 1000));
       return;
     }
 
-    // Stats, Leaderboard, Abandon
     if (sub === "stats") {
-      const [username] = await Promise.all([getUserName(uid, api)]);
+      const username = await getUserName(uid, api);
       const s = getPlayerStats(uid);
       const winRate = s.gamesPlayed > 0 ? Math.round((s.gamesWon / s.gamesPlayed) * 100) : 0;
       return message.reply(UI([
@@ -1168,100 +1272,88 @@ module.exports = {
     }
 
     if (sub === "abandon" || sub === "quit") {
-      const game = activeGames.get(uid) || mpGames.get(uid) || onlineGames.get(uid);
+      const onlineHit = findOnlineGame(uid);
+      const game = activeGames.get(uid) || mpGames.get(uid) || onlineHit?.game;
       if (!game) return message.reply(UI(["No active game."]));
 
       clearGameTimeout(uid);
       if (game.partnerId) clearGameTimeout(game.partnerId);
 
-      if (game.bet && game.bet > 0n && !mpGames.has(uid) && !onlineGames.has(uid)) {
-        await updateUserCash(uid, -game.bet);
-      } else if (mpGames.has(uid) && game.bet > 0n) {
-        await updateUserCash(uid, game.bet);
+      const inPendingPhase = mpGames.has(uid) || onlineHit;
+      if (game.bet && game.bet > 0n) {
+        if (inPendingPhase) await updateUserCash(uid, game.bet);
+        else await updateUserCash(uid, -game.bet);
       }
 
       removeGame(uid, game.partnerId);
-      return message.reply(UI(["Game abandoned.", game.betFormatted !== "0" ? `Lost: -${game.betFormatted}$` : ""]));
+      return message.reply(UI(["Game abandoned.", game.betFormatted && game.betFormatted !== "0" ? `Lost: -${game.betFormatted}$` : ""]));
     }
 
-    // Handle coordinates (A1, B2 etc)
-    const handled = await handleCoords(uid, args[0], args[1], message, api);
+    const handled = await handleCoords(uid, args[0], args[1], message, event, api);
     if (!handled) return message.reply(UI([`Unknown command. Type ${p}memory help`]));
   },
 
   onChat: async function ({ message, event, api }) {
     const uid  = String(event.senderID);
     const body = (event.body || "").trim().toUpperCase();
-    const twoCards = body.match(/^([A-Z]\d+)\s+([A-Z]\d+)$/);
-    const oneCard  = body.match(/^([A-Z]\d+)$/);
-    
-    // Handle online invite responses
+
     const response = body.match(/^(OUI|NON)$/);
-    if (response && onlineInvites.size > 0) {
-      let foundInvite = null;
-      let inviteId = null;
+    if (response) {
+      let foundInvite = null, inviteId = null;
       for (const [id, invite] of onlineInvites) {
-        if (invite.targetId === uid) {
-          foundInvite = invite;
-          inviteId = id;
-          break;
+        if (invite.targetId === uid && invite.targetThreadId === String(event.threadID)) {
+          foundInvite = invite; inviteId = id; break;
         }
       }
-      
+
       if (foundInvite) {
-        const answer = response[0] === "OUI";
-        if (!answer) {
+        const to = inviteTimeouts.get(inviteId);
+        if (to) { clearTimeout(to); inviteTimeouts.delete(inviteId); }
+
+        if (response[0] === "NON") {
           onlineInvites.delete(inviteId);
-          await message.reply(UI(["❌ You declined the invitation."]));
-          try {
-            await api.sendMessage(
-              { body: UI([`${await getUserName(uid, api)} declined your invitation.`]) },
-              foundInvite.threadId
-            );
-          } catch {}
+          await message.reply(UI(["You declined the invitation."]));
+          try { await api.sendMessage(UI([`${foundInvite.targetName} declined your invitation.`]), foundInvite.threadId); } catch {}
           return;
         }
-        
-        // ACCEPT (same logic as before but from onChat)
+
         onlineInvites.delete(inviteId);
-        await message.reply(UI([
-          "✅ Invitation accepted!",
-          "Both players must now place their bet.",
-          `Type: ${global.utils.getPrefix(event.threadID)}memory onlinebet <amount>`
-        ]));
-        
+        const p = global.utils.getPrefix(event.threadID);
+
         const gameId = `online_${foundInvite.uid}_${uid}`;
         onlineGames.set(gameId, {
           uid: foundInvite.uid,
           partnerId: uid,
-          partnerThread: foundInvite.threadId,
-          playerThread: foundInvite.targetThreadId,
-          bet: 0n,
-          betFormatted: "0",
           phase: "bet_p1",
           startTime: Date.now(),
-          inviterName: await getUserName(foundInvite.uid, api),
-          targetName: await getUserName(uid, api)
+          inviterName: foundInvite.inviterName,
+          targetName: foundInvite.targetName,
+          threadId: foundInvite.threadId,
+          targetThreadId: foundInvite.targetThreadId
         });
         saveOnlineGames();
-        
+
+        await message.reply(UI([
+          "Invitation accepted!",
+          `${foundInvite.inviterName} must place the first bet.`,
+          `They'll type: ${p}memory onlinebet <amount>`
+        ]));
+
         try {
           await api.sendMessage(
-            { body: UI([
-              "✅ Your invitation was accepted!",
-              `Both players must now place their bet.`,
-              `Type: ${global.utils.getPrefix(event.threadID)}memory onlinebet <amount>`
-            ]) },
+            UI(["Your invitation was accepted!", `Place your bet: ${p}memory onlinebet <amount>`]),
             foundInvite.threadId
           );
         } catch {}
         return;
       }
     }
-    
+
+    const twoCards = body.match(/^([A-Z]\d+)\s+([A-Z]\d+)$/);
+    const oneCard  = body.match(/^([A-Z]\d+)$/);
     if (!twoCards && !oneCard) return;
-    if (!activeGames.has(uid) && !onlineGames.has(uid)) return;
-    if (twoCards) await handleCoords(uid, twoCards[1], twoCards[2], message, api);
-    else if (oneCard) await handleCoords(uid, oneCard[1], null, message, api);
+    if (!activeGames.has(uid)) return;
+    if (twoCards) await handleCoords(uid, twoCards[1], twoCards[2], message, event, api);
+    else if (oneCard) await handleCoords(uid, oneCard[1], null, message, event, api);
   }
 };
