@@ -363,11 +363,12 @@ module.exports = {
           const petList = Object.entries(PET_TYPES).filter(([, v]) => v.rarity === rarite);
           if (!petList.length) continue;
           msg.push(`${emoji} ${rarite}`);
-          petList.forEach(([k, v]) => {
+          for (const [k, v] of petList) {
             const nom = k.split('_').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
             const prix = await formatNumber(v.price);
-            msg.push(`${v.emoji} ${nom} ${v.evolve ? `→ ${v.evolve.split('_').map(w => w[0].toUpperCase() + w.slice(1)).join(' ')}` : ""} 💰 ${prix}$ | Niv${v.maxLevel} | ATK${v.baseAtk}`);
-          });
+            const evolve = v.evolve ? v.evolve.split('_').map(w => w[0].toUpperCase() + w.slice(1)).join(' ') : "";
+            msg.push(`${v.emoji} ${nom} ${evolve ? `→ ${evolve}` : ""} 💰 ${prix}$ | Niv${v.maxLevel} | ATK${v.baseAtk}`);
+          }
           msg.push("---");
         }
         msg.push("💡 `.pet buy <nom>` pour adopter | `.pet shop items` pour la bouffe");
@@ -558,7 +559,7 @@ module.exports = {
       const raretesEmojis = { COMMUN: "⚪", "PEU COMMUN": "🟢", RARE: "🔵", EPIQUE: "🟣", LEGENDAIRE: "🟡", MYTHIQUE: "🔴", DIVIN: "💎" };
 
       let msg = [`🐾 TES PETS (${userPets.length}/${MAX_PETS})`, "---"];
-      userPets.forEach((pet, i) => {
+      for (const [i, pet] of userPets.entries()) {
         const petData = PET_TYPES[pet.type];
         const emoji = petData?.emoji || "❓";
         const rarity = raretesEmojis[petData?.rarity] || "⚪";
@@ -577,7 +578,7 @@ module.exports = {
         msg.push(` Niv.${pet.level}/${petData?.maxLevel || "?"} | 💥 Puissance: ${power.toLocaleString()} | 🏆 ${victoires}V/${defaites}D (${winRate}%)`);
         msg.push(` ❤️ ${pet.hp}/${pet.maxHp} | 🍗 ${pet.faim}/100 | ⚡ ${pet.energie || 100}/100`);
         if (i < userPets.length - 1) msg.push(" ─────────────────────────────");
-      });
+      }
       msg.push("---");
       msg.push("⭐ = Pet actif | 💡 `.pet select <nom>` pour changer");
       msg.push("`.pet stats <nom>` | `.pet rename <nom> <nouveau>` | `.pet train <num>`");
@@ -1457,12 +1458,12 @@ module.exports = {
       }
 
       let msg = ["📦 **TON INVENTAIRE**", "---"];
-      keys.forEach(key => {
+      for (const key of keys) {
         const itemData = ITEMS[key];
         const emoji = itemData ? itemData[0].split(' ')[0] : "📦";
         const nom = itemData ? itemData[0] : key;
         msg.push(`${emoji} **${nom}** x${inv[key]}`);
-      });
+      }
       msg.push("---");
       msg.push(`💡 Total: ${keys.length} types d'items`);
       msg.push("`.pet use <item> <pet>` pour utiliser");
