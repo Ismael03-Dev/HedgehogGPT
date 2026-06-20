@@ -3,9 +3,9 @@ const path = require("path");
 const { createCanvas } = require("canvas");
 const axios = require("axios");
 
-const CASH_URL   = "https://cash-api-five.vercel.app/api/cash";
+const CASH_URL = "https://cash-api-five.vercel.app/api/cash";
 const FORMAT_URL = "https://numbers-conversion.vercel.app/api/format";
-const MAX_LIMIT  = 10n ** 261n;
+const MAX_LIMIT = 10n ** 261n;
 
 const TIERS = [
   { v: 10n**258n, s: "Qiu" }, { v: 10n**255n, s: "Qu" }, { v: 10n**252n, s: "Tu" },
@@ -147,11 +147,11 @@ function getUserName(uid, api) {
 
 async function loadAvatarBuffer(uid, api) {
   try {
-    const d   = await api.getUserInfo(uid);
+    const d = await api.getUserInfo(uid);
     const url = d[uid]?.thumbSrc || `https://graph.facebook.com/${uid}/picture?width=200&height=200&type=square`;
     const res = await axios.get(url, {
       responseType: "arraybuffer",
-      timeout: 8000,
+      timeout: 5000,
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "image/webp,image/apng,image/*,*/*;q=0.8"
@@ -171,16 +171,18 @@ function UI(lines) {
   return out + "╰─────────────────────•";
 }
 
-const GAME_FILE    = "./memory_games.json";
-const MP_FILE      = "./memory_mp_games.json";
-const STATS_FILE   = "./memory_stats.json";
-const ONLINE_FILE  = "./memory_online.json";
+const GAME_FILE = "./memory_games.json";
+const MP_FILE = "./memory_mp_games.json";
+const STATS_FILE = "./memory_stats.json";
+const ONLINE_FILE = "./memory_online.json";
+const GROUP_SELECTION_FILE = "./memory_group_selection.json";
 
-let activeGames   = new Map();
-let mpGames       = new Map();
-let onlineGames   = new Map();
+let activeGames = new Map();
+let mpGames = new Map();
+let onlineGames = new Map();
 let onlineInvites = new Map();
-let playerStats   = {};
+let playerStats = {};
+let groupSelections = new Map();
 const gameTimeouts = new Map();
 const inviteTimeouts = new Map();
 
@@ -207,6 +209,14 @@ if (fs.existsSync(ONLINE_FILE)) {
 }
 if (fs.existsSync(STATS_FILE)) {
   try { playerStats = JSON.parse(fs.readFileSync(STATS_FILE, "utf8")); } catch {}
+}
+if (fs.existsSync(GROUP_SELECTION_FILE)) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(GROUP_SELECTION_FILE, "utf8"));
+    for (const [k, v] of Object.entries(raw)) {
+      groupSelections.set(k, v);
+    }
+  } catch {}
 }
 
 function saveGames() {
@@ -235,6 +245,14 @@ function saveOnlineGames() {
 
 function saveStats() {
   try { fs.writeFileSync(STATS_FILE, JSON.stringify(playerStats, null, 2)); } catch {}
+}
+
+function saveGroupSelections() {
+  try {
+    const obj = {};
+    for (const [k, v] of groupSelections) obj[k] = v;
+    fs.writeFileSync(GROUP_SELECTION_FILE, JSON.stringify(obj, null, 2));
+  } catch {}
 }
 
 function getPlayerStats(uid) {
@@ -273,31 +291,35 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// Thèmes — chaque symbole a un identifiant texte (plus d'emoji)
 const CARD_THEMES = {
   animaux: ["DOG","CAT","MOUSE","HAMSTER","RABBIT","FOX","BEAR","PANDA","KOALA","TIGER","LION","COW","PIG","FROG"],
-  fruits:  ["APPLE","ORANGE","LEMON","GRAPE","STRAWBERRY","BLUEBERRY","PEACH","CHERRY","MANGO","PINEAPPLE","KIWI","MELON","WATERMELON","COCONUT"],
-  casino:  ["SLOT","DICE","CARD","CLUB","CHIP","TARGET","BOWLING","CONTROLLER","JOYSTICK","BILLIARD","MASK","TENT","TICKET","TROPHY"],
-  espace:  ["EARTH","MOON","STAR","SUN","SATURN","COMET","GALAXY","ROCKET","UFO","SPARKLE","GLOW","NEWMOON","FULLMOON","SATELLITE"]
+  fruits: ["APPLE","ORANGE","LEMON","GRAPE","STRAWBERRY","BLUEBERRY","PEACH","CHERRY","MANGO","PINEAPPLE","KIWI","MELON","WATERMELON","COCONUT"],
+  casino: ["SLOT","DICE","CARD","CLUB","CHIP","TARGET","BOWLING","CONTROLLER","JOYSTICK","BILLIARD","MASK","TENT","TICKET","TROPHY"],
+  espace: ["EARTH","MOON","STAR","SUN","SATURN","COMET","GALAXY","ROCKET","UFO","SPARKLE","GLOW","NEWMOON","FULLMOON","SATELLITE"]
 };
 
 const DIFFICULTIES = {
-  facile:    { cols: 4, pairs: 8,  multiplier: 2, bonusSpeed: 300, bonusMult: 3  },
-  normal:    { cols: 4, pairs: 8,  multiplier: 3, bonusSpeed: 240, bonusMult: 5  },
-  difficile: { cols: 5, pairs: 10, multiplier: 5, bonusSpeed: 180, bonusMult: 8  },
-  extreme:   { cols: 6, pairs: 12, multiplier: 8, bonusSpeed: 120, bonusMult: 15 }
+  facile: { cols: 4, pairs: 8, multiplier: 2, bonusSpeed: 300, bonusMult: 3 },
+  normal: { cols: 4, pairs: 8, multiplier: 3, bonusSpeed: 240, bonusMult: 5 },
+  difficile: { cols: 5, pairs: 10, multiplier: 5, bonusSpeed: 180, bonusMult: 8 },
+  extreme: { cols: 6, pairs: 12, multiplier: 8, bonusSpeed: 120, bonusMult: 15 }
 };
 
-const MP_CONFIG  = { cols: 5, pairs: 12, multiplier: 4, bonusSpeed: 200, bonusMult: 8 };
+const MP_CONFIG = { cols: 5, pairs: 10, multiplier: 4, bonusSpeed: 200, bonusMult: 8 };
 const TIME_LIMIT = 600;
 const INVITE_TTL = 60000;
 
 const DIFFICULTY_COLORS = { facile: "#22c55e", normal: "#3b82f6", difficile: "#f59e0b", extreme: "#ef4444", multiplayer: "#a855f7", online: "#06b6d4" };
 
 function createBoard(cols, pairs, theme) {
-  const symbols  = CARD_THEMES[theme] || CARD_THEMES.animaux;
-  const selected = symbols.slice(0, pairs);
-  const all      = [...selected, ...selected];
+  const symbols = CARD_THEMES[theme] || CARD_THEMES.animaux;
+  const maxPairs = Math.min(pairs, symbols.length);
+  const selected = symbols.slice(0, maxPairs);
+  let all = [...selected, ...selected];
+  const totalCells = cols * Math.ceil(all.length / cols);
+  while (all.length < totalCells) {
+    all.push("EMPTY");
+  }
   for (let i = all.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [all[i], all[j]] = [all[j], all[i]];
@@ -307,7 +329,7 @@ function createBoard(cols, pairs, theme) {
 
 function parseCoord(input, cols, rows) {
   const str = String(input).toUpperCase().trim();
-  const m   = str.match(/^([A-Z])(\d+)$/);
+  const m = str.match(/^([A-Z])(\d+)$/);
   if (!m) return null;
   const col = m[1].charCodeAt(0) - 65;
   const row = parseInt(m[2]) - 1;
@@ -315,26 +337,26 @@ function parseCoord(input, cols, rows) {
   return { row, col, index: row * cols + col };
 }
 
-// ─── COULEURS PAR SYMBOLE ───────────────────────────────────────────────────
-
 const SYMBOL_COLORS = {
   DOG:"#f59e0b", CAT:"#f97316", MOUSE:"#94a3b8", HAMSTER:"#fb923c", RABBIT:"#f9a8d4", FOX:"#ea580c", BEAR:"#92400e", PANDA:"#e2e8f0", KOALA:"#9ca3af", TIGER:"#f59e0b", LION:"#d97706", COW:"#fbbf24", PIG:"#ec4899", FROG:"#22c55e",
   APPLE:"#ef4444", ORANGE:"#f97316", LEMON:"#fbbf24", GRAPE:"#7c3aed", STRAWBERRY:"#f43f5e", BLUEBERRY:"#3b82f6", PEACH:"#fb923c", CHERRY:"#dc2626", MANGO:"#f59e0b", PINEAPPLE:"#84cc16", KIWI:"#65a30d", MELON:"#a3e635", WATERMELON:"#22c55e", COCONUT:"#92400e",
   SLOT:"#fbbf24", DICE:"#ef4444", CARD:"#e2e8f0", CLUB:"#1e293b", CHIP:"#a855f7", TARGET:"#ef4444", BOWLING:"#f59e0b", CONTROLLER:"#818cf8", JOYSTICK:"#a78bfa", BILLIARD:"#1e293b", MASK:"#ec4899", TENT:"#f59e0b", TICKET:"#818cf8", TROPHY:"#fbbf24",
-  EARTH:"#22c55e", MOON:"#fbbf24", STAR:"#fde047", SUN:"#f59e0b", SATURN:"#f97316", COMET:"#818cf8", GALAXY:"#a78bfa", ROCKET:"#60a5fa", UFO:"#a78bfa", SPARKLE:"#fde047", GLOW:"#fbbf24", NEWMOON:"#94a3b8", FULLMOON:"#fbbf24", SATELLITE:"#60a5fa"
+  EARTH:"#22c55e", MOON:"#fbbf24", STAR:"#fde047", SUN:"#f59e0b", SATURN:"#f97316", COMET:"#818cf8", GALAXY:"#a78bfa", ROCKET:"#60a5fa", UFO:"#a78bfa", SPARKLE:"#fde047", GLOW:"#fbbf24", NEWMOON:"#94a3b8", FULLMOON:"#fbbf24", SATELLITE:"#60a5fa",
+  EMPTY:"#1a1a2e"
 };
 
 function getSymbolColor(s) { return SYMBOL_COLORS[s] || "#818cf8"; }
 
-// ─── DESSIN GÉOMÉTRIQUE DES SYMBOLES (remplace les emojis) ──────────────────
-
 function drawSymbolIcon(ctx, symbol, cx, cy, size, glow = false) {
+  if (symbol === "EMPTY") {
+    ctx.fillStyle = "rgba(255,255,255,0.05)";
+    ctx.beginPath(); ctx.arc(cx, cy, size * 0.1, 0, Math.PI * 2); ctx.fill();
+    return;
+  }
   const color = getSymbolColor(symbol);
   const s = size;
-
   ctx.save();
   if (glow) { ctx.shadowColor = color; ctx.shadowBlur = 20; }
-
   switch (symbol) {
     case "DOG": case "CAT": case "FOX": case "TIGER": case "LION": case "BEAR": case "PANDA": case "KOALA": {
       ctx.fillStyle = color;
@@ -570,13 +592,13 @@ function drawSymbolIcon(ctx, symbol, cx, cy, size, glow = false) {
 }
 
 async function generateBoardImage({ game, username, avatarImg, lastFlipped, lastMatch, lastMiss, player2Name }) {
-  const cols  = game.cols;
-  const rows  = Math.ceil(game.board.length / cols);
-  const CELL  = 88, GUTTER = 10, PAD_L = 50, PAD_T = 180;
-  const W     = PAD_L + cols * (CELL + GUTTER) + 40;
-  const H     = PAD_T + rows * (CELL + GUTTER) + 150;
+  const cols = game.cols;
+  const rows = Math.ceil(game.board.length / cols);
+  const CELL = 88, GUTTER = 10, PAD_L = 50, PAD_T = 180;
+  const W = PAD_L + cols * (CELL + GUTTER) + 40;
+  const H = PAD_T + rows * (CELL + GUTTER) + 150;
   const canvas = createCanvas(W, H);
-  const ctx    = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d");
   const diffColor = DIFFICULTY_COLORS[game.difficulty] || "#818cf8";
 
   const bg = ctx.createLinearGradient(0, 0, W, H);
@@ -612,17 +634,17 @@ async function generateBoardImage({ game, username, avatarImg, lastFlipped, last
   ctx.font = "9px Arial"; ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.textAlign = "center";
   ctx.fillText(username.substring(0, 14), ax, ay + 40); ctx.textAlign = "left";
 
-  const statsY    = 90;
-  const elapsed   = Math.floor((Date.now() - game.startTime) / 1000);
+  const statsY = 90;
+  const elapsed = Math.floor((Date.now() - game.startTime) / 1000);
   const remaining = Math.max(0, TIME_LIMIT - elapsed);
-  const accuracy  = game.attempts > 0 ? Math.round((game.matched / game.attempts) * 100) : 100;
+  const accuracy = game.attempts > 0 ? Math.round((game.matched / game.attempts) * 100) : 100;
 
   const statItems = [
-    { label: "PAIRS",     value: `${game.matched}/${game.totalPairs}`, color: game.matched === game.totalPairs ? "#34d399" : "#e0d4ff" },
-    { label: "TRIES",     value: `${game.attempts}`,                   color: "#e0d4ff" },
-    { label: "PRECISION", value: `${accuracy}%`,                       color: accuracy >= 80 ? "#34d399" : accuracy >= 50 ? "#f59e0b" : "#ef4444" },
-    { label: "TIME",      value: timeStr(remaining),                   color: remaining <= 60 ? "#ef4444" : remaining <= 120 ? "#f59e0b" : diffColor },
-    { label: "BET",       value: `${game.betFormatted}$`,              color: "#fbbf24" }
+    { label: "PAIRS", value: `${game.matched}/${game.totalPairs}`, color: game.matched === game.totalPairs ? "#34d399" : "#e0d4ff" },
+    { label: "TRIES", value: `${game.attempts}`, color: "#e0d4ff" },
+    { label: "PRECISION", value: `${accuracy}%`, color: accuracy >= 80 ? "#34d399" : accuracy >= 50 ? "#f59e0b" : "#ef4444" },
+    { label: "TIME", value: timeStr(remaining), color: remaining <= 60 ? "#ef4444" : remaining <= 120 ? "#f59e0b" : diffColor },
+    { label: "BET", value: `${game.betFormatted}$`, color: "#fbbf24" }
   ];
   if (player2Name) statItems.push({ label: "VS", value: player2Name.substring(0, 10), color: "#a855f7" });
 
@@ -638,7 +660,7 @@ async function generateBoardImage({ game, username, avatarImg, lastFlipped, last
 
   for (let c = 0; c < cols; c++) {
     const label = String.fromCharCode(65 + c);
-    const cx    = PAD_L + c * (CELL + GUTTER) + CELL / 2;
+    const cx = PAD_L + c * (CELL + GUTTER) + CELL / 2;
     ctx.font = "bold 12px Arial"; ctx.fillStyle = diffColor + "cc"; ctx.textAlign = "center";
     ctx.fillText(label, cx, PAD_T - 14); ctx.textAlign = "left";
   }
@@ -651,19 +673,19 @@ async function generateBoardImage({ game, username, avatarImg, lastFlipped, last
   for (let idx = 0; idx < game.board.length; idx++) {
     const r = Math.floor(idx / cols), c = idx % cols;
     const cx = PAD_L + c * (CELL + GUTTER), cy = PAD_T + r * (CELL + GUTTER);
-    const isMatched  = game.revealed[idx];
-    const isFlipped  = lastFlipped?.includes(idx);
+    const isMatched = game.revealed[idx];
+    const isFlipped = lastFlipped?.includes(idx);
     const isMatchNow = lastMatch?.includes(idx);
-    const isMissNow  = lastMiss?.includes(idx);
-    const symbol     = game.board[idx];
-    const symColor   = getSymbolColor(symbol);
+    const isMissNow = lastMiss?.includes(idx);
+    const symbol = game.board[idx];
+    const symColor = getSymbolColor(symbol);
 
     let strokeColor, strokeW, gradTop, gradBot;
-    if (isMatched)      { strokeColor = symColor;  strokeW = 2.5; gradTop = "#0d2e1a"; gradBot = "#061410"; }
-    else if (isMatchNow){ strokeColor = "#34d399"; strokeW = 3.5; gradTop = "#0d3020"; gradBot = "#061a10"; }
-    else if (isMissNow) { strokeColor = "#ef4444"; strokeW = 3;   gradTop = "#2e0d0d"; gradBot = "#1a0606"; }
-    else if (isFlipped) { strokeColor = symColor;  strokeW = 3;   gradTop = "#1a1040"; gradBot = "#0d0820"; }
-    else                { strokeColor = diffColor + "44"; strokeW = 1.5; gradTop = "#110f30"; gradBot = "#08061a"; }
+    if (isMatched) { strokeColor = symColor; strokeW = 2.5; gradTop = "#0d2e1a"; gradBot = "#061410"; }
+    else if (isMatchNow) { strokeColor = "#34d399"; strokeW = 3.5; gradTop = "#0d3020"; gradBot = "#061a10"; }
+    else if (isMissNow) { strokeColor = "#ef4444"; strokeW = 3; gradTop = "#2e0d0d"; gradBot = "#1a0606"; }
+    else if (isFlipped) { strokeColor = symColor; strokeW = 3; gradTop = "#1a1040"; gradBot = "#0d0820"; }
+    else { strokeColor = diffColor + "44"; strokeW = 1.5; gradTop = "#110f30"; gradBot = "#08061a"; }
 
     const cellG = ctx.createLinearGradient(cx, cy, cx, cy + CELL);
     cellG.addColorStop(0, gradTop); cellG.addColorStop(1, gradBot);
@@ -676,7 +698,6 @@ async function generateBoardImage({ game, username, avatarImg, lastFlipped, last
       const radGlow = ctx.createRadialGradient(cx + CELL / 2, cy + CELL / 2, 4, cx + CELL / 2, cy + CELL / 2, CELL * 0.52);
       radGlow.addColorStop(0, glowColor + "40"); radGlow.addColorStop(0.5, glowColor + "18"); radGlow.addColorStop(1, "transparent");
       ctx.fillStyle = radGlow; roundRect(ctx, cx + 2, cy + 2, CELL - 4, CELL - 4, 11); ctx.fill();
-
       drawSymbolIcon(ctx, symbol, cx + CELL / 2, cy + CELL / 2 + 4, CELL * 0.36, true);
     } else {
       const hiddenBg = ctx.createRadialGradient(cx + CELL / 2, cy + CELL / 2, 2, cx + CELL / 2, cy + CELL / 2, CELL * 0.5);
@@ -693,7 +714,7 @@ async function generateBoardImage({ game, username, avatarImg, lastFlipped, last
   ctx.fillText("Type: A1 B3  or  A1", W / 2, footerY + 24); ctx.textAlign = "left";
 
   ctx.font = "8px Arial"; ctx.fillStyle = diffColor + "44"; ctx.textAlign = "center";
-  ctx.fillText("HEDGEHOG MEMORY v7.0", W / 2, H - 14); ctx.textAlign = "left";
+  ctx.fillText("HEDGEHOG MEMORY v7.2", W / 2, H - 14); ctx.textAlign = "left";
 
   return canvas.toBuffer("image/png");
 }
@@ -702,24 +723,39 @@ async function sendBoardTo(sender, threadId, game, username, avatarImg, lastFlip
   const body = UI(bodyLines);
   try {
     const img = await generateBoardImage({ game, username, avatarImg, lastFlipped, lastMatch, lastMiss, player2Name });
-    const p   = `./memory_board_${game.uid}_${Date.now()}.png`;
+    const p = `./memory_board_${game.uid}_${Date.now()}.png`;
     fs.writeFileSync(p, img);
-    await sender(body, threadId, p);
-    fs.unlinkSync(p);
-  } catch { await sender(body, threadId, null); }
+    try {
+      await sender(body, threadId, p);
+    } finally {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    }
+  } catch {
+    await sender(body, threadId, null);
+  }
 }
 
 function makeReplySender(message) {
   return async (body, _threadId, imgPath) => {
-    if (imgPath) await message.reply({ body, attachment: fs.createReadStream(imgPath) });
-    else await message.reply(body);
+    if (imgPath && fs.existsSync(imgPath)) {
+      await message.reply({ body, attachment: fs.createReadStream(imgPath) });
+    } else {
+      await message.reply(body);
+    }
   };
 }
 
 function makeApiSender(api) {
   return async (body, threadId, imgPath) => {
-    if (imgPath) await api.sendMessage({ body, attachment: fs.createReadStream(imgPath) }, threadId);
-    else await api.sendMessage(body, threadId);
+    try {
+      if (imgPath && fs.existsSync(imgPath)) {
+        await api.sendMessage({ body, attachment: fs.createReadStream(imgPath) }, threadId);
+      } else {
+        await api.sendMessage(body, threadId);
+      }
+    } catch {
+      await api.sendMessage(body, threadId);
+    }
   };
 }
 
@@ -738,46 +774,59 @@ function removeGame(uid, partnerId) {
 }
 
 function findOnlineGame(uid) {
+  if (activeGames.has(uid)) {
+    const game = activeGames.get(uid);
+    if (game.isOnline) return { id: `active_${uid}`, game };
+  }
   for (const [id, g] of onlineGames) {
     if (g.uid === uid || g.partnerId === uid) return { id, game: g };
   }
   return null;
 }
 
+function findAnyGame(uid) {
+  if (activeGames.has(uid)) return { type: "active", game: activeGames.get(uid) };
+  if (mpGames.has(uid)) return { type: "mp", game: mpGames.get(uid) };
+  const onlineHit = findOnlineGame(uid);
+  if (onlineHit) return { type: "online", game: onlineHit.game };
+  return null;
+}
+
 async function endGame(uid, sender, threadId, api, win) {
   const fromActive = activeGames.get(uid);
-  const fromMP     = mpGames.get(uid);
-  const onlineHit  = findOnlineGame(uid);
-  const game       = fromActive || fromMP || onlineHit?.game;
+  const fromMP = mpGames.get(uid);
+  const onlineHit = findOnlineGame(uid);
+  const game = fromActive || fromMP || onlineHit?.game;
   if (!game) return;
 
   clearGameTimeout(uid);
   if (game.partnerId) clearGameTimeout(game.partnerId);
 
   const partnerThread = game.isOnline ? game.partnerThreadId : null;
+  const partnerId = game.partnerId;
   removeGame(uid, game.partnerId);
 
-  const diff       = game.difficulty && DIFFICULTIES[game.difficulty] ? DIFFICULTIES[game.difficulty] : MP_CONFIG;
-  const timeTaken  = Math.floor((Date.now() - game.startTime) / 1000);
+  const diff = game.difficulty && DIFFICULTIES[game.difficulty] ? DIFFICULTIES[game.difficulty] : MP_CONFIG;
+  const timeTaken = Math.floor((Date.now() - game.startTime) / 1000);
   const speedBonus = win && timeTaken <= (diff.bonusSpeed || 200);
-  const baseMult   = speedBonus ? (diff.bonusMult || 8) : (diff.multiplier || 4);
+  const baseMult = speedBonus ? (diff.bonusMult || 8) : (diff.multiplier || 4);
   const penaltyPct = Math.min((game.hintPenalty || 0) * 0.20, 0.80);
-  const finalMult  = Math.max(parseFloat((baseMult * (1 - penaltyPct)).toFixed(2)), 1);
-  const accuracy   = game.attempts > 0 ? Math.round((game.matched / game.attempts) * 100) : 0;
+  const finalMult = Math.max(parseFloat((baseMult * (1 - penaltyPct)).toFixed(2)), 1);
+  const accuracy = game.attempts > 0 ? Math.round((game.matched / game.attempts) * 100) : 0;
 
   recordGameResult(uid, win, timeTaken, accuracy, game.matched);
-  if (game.partnerId) recordGameResult(game.partnerId, win, timeTaken, accuracy, game.matched);
+  if (partnerId) recordGameResult(partnerId, win, timeTaken, accuracy, game.matched);
 
   if (win) {
     const multInt = BigInt(Math.floor(finalMult * 100));
-    const earned  = game.bet * multInt / 100n;
+    const earned = game.bet * multInt / 100n;
 
     if (game.isMultiplayer || game.isOnline) {
       const half = earned / 2n;
       await updateUserCash(uid, half);
-      await updateUserCash(game.partnerId, half);
+      if (partnerId) await updateUserCash(partnerId, half);
       const fEarned = await formatNumber(half);
-      const fNewU   = await formatNumber(await getUserCash(uid));
+      const fNewU = await formatNumber(await getUserCash(uid));
 
       await sender(UI([
         "WIN! (50/50 split)", "---",
@@ -786,8 +835,8 @@ async function endGame(uid, sender, threadId, api, win) {
         `Multiplier: x${finalMult}${speedBonus ? " (speed bonus)" : ""}`
       ]), threadId, null);
 
-      if (game.isOnline && partnerThread && api) {
-        const fNewP = await formatNumber(await getUserCash(game.partnerId));
+      if (game.isOnline && partnerThread && api && partnerId) {
+        const fNewP = await formatNumber(await getUserCash(partnerId));
         try {
           await api.sendMessage(UI([
             "WIN! (50/50 split)", "---",
@@ -800,7 +849,7 @@ async function endGame(uid, sender, threadId, api, win) {
     } else {
       await updateUserCash(uid, earned);
       const fEarned = await formatNumber(earned);
-      const fNew    = await formatNumber(await getUserCash(uid));
+      const fNew = await formatNumber(await getUserCash(uid));
       await sender(UI([
         "VICTORY!", "---",
         `+${fEarned}$ (x${finalMult})${speedBonus ? " — speed bonus!" : ""}`,
@@ -812,7 +861,7 @@ async function endGame(uid, sender, threadId, api, win) {
     if (game.isMultiplayer || game.isOnline) {
       const fNew = await formatNumber(await getUserCash(uid));
       await sender(UI(["TIME'S UP (50/50 lost)", "---", `-${game.betFormatted}$`, `Balance: ${fNew}$`]), threadId, null);
-      if (game.isOnline && partnerThread && api) {
+      if (game.isOnline && partnerThread && api && partnerId) {
         try { await api.sendMessage(UI(["TIME'S UP (50/50 lost)", "---", `-${game.betFormatted}$`]), partnerThread); } catch {}
       }
     } else {
@@ -834,7 +883,7 @@ async function processMove(coord1, coord2, game, uid, sender, threadId, api) {
   const arg1Str = `${String.fromCharCode(65 + coord1.col)}${coord1.row + 1}`;
   const arg2Str = `${String.fromCharCode(65 + coord2.col)}${coord2.row + 1}`;
 
-  if (isMatch) {
+  if (isMatch && game.board[coord1.index] !== "EMPTY") {
     game.revealed[coord1.index] = true;
     game.revealed[coord2.index] = true;
     game.matched++;
@@ -859,8 +908,13 @@ async function processMove(coord1, coord2, game, uid, sender, threadId, api) {
     await sendBoardTo(sender, threadId, game, username, avatarImg, [coord1.index, coord2.index], [coord1.index, coord2.index], [],
       [`MATCH! ${game.board[coord1.index]}`, `${arg1Str} & ${arg2Str}`, `Pairs: ${game.matched}/${game.totalPairs}`], game.player2Name);
   } else {
-    await sendBoardTo(sender, threadId, game, username, avatarImg, [coord1.index, coord2.index], [], [coord1.index, coord2.index],
-      [`No match`, `${arg1Str} ≠ ${arg2Str}`, `Pairs: ${game.matched}/${game.totalPairs}`], game.player2Name);
+    if (game.board[coord1.index] !== "EMPTY" && game.board[coord2.index] !== "EMPTY") {
+      await sendBoardTo(sender, threadId, game, username, avatarImg, [coord1.index, coord2.index], [], [coord1.index, coord2.index],
+        [`No match`, `${arg1Str} ≠ ${arg2Str}`, `Pairs: ${game.matched}/${game.totalPairs}`], game.player2Name);
+    } else {
+      await sendBoardTo(sender, threadId, game, username, avatarImg, [coord1.index, coord2.index], [], [],
+        [`Empty card selected`, `${arg1Str} & ${arg2Str}`, `Pairs: ${game.matched}/${game.totalPairs}`], game.player2Name);
+    }
   }
 }
 
@@ -868,16 +922,22 @@ async function handleCoords(uid, rawArg0, rawArg1, message, event, api) {
   const game = activeGames.get(uid);
   if (!game) return false;
 
-  const threadId = game.isOnline ? game.threadId : event.threadID;
-  const sender   = game.isOnline && game.threadId !== event.threadID ? makeApiSender(api) : makeReplySender(message);
+  const isDifferentThread = game.isOnline && game.threadId && game.threadId !== event.threadID;
+  const sender = isDifferentThread ? makeApiSender(api) : makeReplySender(message);
+  const threadId = game.threadId || event.threadID;
 
   const elapsed = Math.floor((Date.now() - game.startTime) / 1000);
   if (elapsed >= TIME_LIMIT) { await endGame(uid, sender, threadId, api, false); return true; }
 
-  const rows   = Math.ceil(game.board.length / game.cols);
+  const rows = Math.ceil(game.board.length / game.cols);
   const coord1 = parseCoord(rawArg0, game.cols, rows);
   const coord2 = rawArg1 ? parseCoord(rawArg1, game.cols, rows) : null;
   if (!coord1) return false;
+
+  if (game.board[coord1.index] === "EMPTY") {
+    await sender(UI(["This card is empty!"]), threadId, null);
+    return true;
+  }
 
   if (!coord2) {
     if (game.firstCard !== null && game.firstCard !== coord1.index) {
@@ -902,6 +962,7 @@ async function handleCoords(uid, rawArg0, rawArg1, message, event, api) {
 
   if (coord1.index === coord2.index) { await sender(UI(["Pick two different cards!"]), threadId, null); return true; }
   if (game.revealed[coord1.index] || game.revealed[coord2.index]) { await sender(UI(["Already found!"]), threadId, null); return true; }
+  if (game.board[coord2.index] === "EMPTY") { await sender(UI(["This card is empty!"]), threadId, null); return true; }
   game.firstCard = null;
   await processMove(coord1, coord2, game, uid, sender, threadId, api);
   return true;
@@ -909,39 +970,88 @@ async function handleCoords(uid, rawArg0, rawArg1, message, event, api) {
 
 module.exports = {
   config: {
-    name:             "memory",
-    version:          "7.0",
-    author:           "Ismael03-Dev",
-    countDown:        2,
-    role:             0,
-    category:         "fun",
-    shortDescription: { en: "Memory Game — Solo, Multi & Online (geometric icons)" }
+    name: "memory",
+    version: "7.2",
+    author: "Ismael03-Dev",
+    countDown: 2,
+    role: 0,
+    category: "fun",
+    shortDescription: { en: "Memory Game — Solo, Multi & Online" }
   },
 
   onStart: async function ({ args, message, event, api }) {
-    const uid      = String(event.senderID);
+    const uid = String(event.senderID);
     const threadId = String(event.threadID);
-    const p        = global.utils.getPrefix(event.threadID);
-    const sub      = args[0]?.toLowerCase();
+    const p = global.utils.getPrefix(event.threadID);
+    const sub = args[0]?.toLowerCase();
 
     if (!sub || sub === "help") {
       return message.reply(UI([
-        "MEMORY v7.0", "---",
+        "MEMORY v7.2", "---",
         `${p}memory start <bet> [diff] [theme]`,
         `${p}memory multi @user`,
         `${p}memory online <user_id> <group_id>`,
+        `${p}memory group`,
         `${p}memory stats`,
         `${p}memory leaderboard`,
         `${p}memory abandon`, "---",
         "Diff: facile/normal/difficile/extreme",
         "Themes: animaux/fruits/casino/espace",
-        "Multi: 5x5 grid, 12 pairs, x4-x8",
-        "Online: play across different groups!"
+        "Multi: 5x5 grid, 10 pairs, x4-x8",
+        "Online: play across different groups!",
+        "Group: list all groups with numbers, select by replying with number"
       ]));
     }
 
+    if (sub === "group") {
+      try {
+        const threads = await api.getThreadList(100, null, ["INBOX"]);
+        const groups = threads
+          .filter(t => t.isGroup && t.threadID)
+          .map(t => ({
+            id: t.threadID,
+            name: t.name || "Unnamed Group",
+            members: t.participantIDs?.length || 0,
+            online: t.onlineUsers?.length || 0
+          }));
+
+        if (groups.length === 0) return message.reply(UI(["No groups found where bot is present."]));
+
+        const lines = ["📋 GROUPS", "---", `Total: ${groups.length} groups`, "---"];
+        for (let i = 0; i < groups.length; i++) {
+          const g = groups[i];
+          lines.push(`${i + 1}. ${g.name}`);
+          lines.push(`   👥 ${g.members} members (${g.online} online)`);
+          lines.push(`   🆔 ${g.id}`);
+          lines.push("---");
+        }
+        lines.push(`Reply with a number (1-${groups.length}) to see members`);
+
+        const msg = await message.reply(UI(lines));
+        
+        groupSelections.set(uid, {
+          groups: groups,
+          msgId: msg.messageID,
+          threadId: threadId,
+          timestamp: Date.now()
+        });
+        saveGroupSelections();
+
+        setTimeout(() => {
+          if (groupSelections.has(uid)) {
+            groupSelections.delete(uid);
+            saveGroupSelections();
+          }
+        }, 120000);
+
+        return;
+      } catch (error) {
+        return message.reply(UI(["Error retrieving groups list."]));
+      }
+    }
+
     if (sub === "online" || sub === "cross") {
-      const targetId      = args[1];
+      const targetId = args[1];
       const targetThreadId = args[2];
 
       if (!targetId || !targetThreadId) {
@@ -955,20 +1065,21 @@ module.exports = {
       if (targetThreadId === threadId) {
         return message.reply(UI(["Online mode is for cross-group play!", `Use ${p}memory multi @user for same-group games.`]));
       }
-      if (activeGames.has(targetId) || mpGames.has(targetId) || findOnlineGame(targetId)) {
-        return message.reply(UI(["That player is already in a game."]));
-      }
-      if (activeGames.has(uid) || mpGames.has(uid) || findOnlineGame(uid)) {
-        return message.reply(UI(["You already have a game or invitation in progress."]));
-      }
+      
+      const targetGame = findAnyGame(targetId);
+      if (targetGame) return message.reply(UI(["That player is already in a game."]));
+      
+      const myGame = findAnyGame(uid);
+      if (myGame) return message.reply(UI(["You already have a game or invitation in progress."]));
+      
       for (const [, invite] of onlineInvites) {
         if (invite.targetId === targetId) return message.reply(UI(["This player already has a pending online invite."]));
         if (invite.uid === uid) return message.reply(UI(["You already have a pending invite."]));
       }
 
-      const inviteId    = `invite_${uid}_${Date.now()}`;
+      const inviteId = `invite_${uid}_${Date.now()}`;
       const inviterName = await getUserName(uid, api);
-      const targetName  = await getUserName(targetId, api);
+      const targetName = await getUserName(targetId, api);
 
       onlineInvites.set(inviteId, {
         uid, targetId, targetThreadId, threadId,
@@ -1020,9 +1131,9 @@ module.exports = {
       const isInviter = gameEntry.uid === uid;
 
       if (gameEntry.phase === "bet_p1" && isInviter) {
-        gameEntry.bet          = amount;
+        gameEntry.bet = amount;
         gameEntry.betFormatted = await formatNumber(amount);
-        gameEntry.phase        = "bet_p2";
+        gameEntry.phase = "bet_p2";
         await updateUserCash(uid, -amount);
         saveOnlineGames();
 
@@ -1051,8 +1162,8 @@ module.exports = {
         await updateUserCash(uid, -amount);
         onlineGames.delete(gameId);
 
-        const theme    = "animaux";
-        const board    = createBoard(MP_CONFIG.cols, MP_CONFIG.pairs, theme);
+        const theme = "animaux";
+        const board = createBoard(MP_CONFIG.cols, MP_CONFIG.pairs, theme);
         const revealed = new Array(board.length).fill(false);
 
         const baseGame = {
@@ -1116,7 +1227,9 @@ module.exports = {
       const alreadyInvited = [...mpGames.values()].some(g => g.uid === uid || g.targetId === uid);
       if (alreadyInvited) return message.reply(UI(["You already have a pending invitation."]));
 
-      const targetBusy = activeGames.has(targetId) || [...mpGames.values()].some(g => g.uid === targetId || g.targetId === targetId);
+      const targetBusy = activeGames.has(targetId) || 
+        [...mpGames.values()].some(g => g.uid === targetId || g.targetId === targetId) || 
+        findOnlineGame(targetId);
       if (targetBusy) return message.reply(UI(["That player is already in a game or invitation."]));
 
       mpGames.set(uid, { uid, targetId, phase: "bet_p1", startTime: Date.now(), bet: 0n, betFormatted: "0" });
@@ -1150,9 +1263,9 @@ module.exports = {
         if (pendingEntry.phase !== "bet_p1")
           return message.reply(UI(["You already placed your bet. Waiting for opponent."]));
 
-        pendingEntry.bet          = amount;
+        pendingEntry.bet = amount;
         pendingEntry.betFormatted = await formatNumber(amount);
-        pendingEntry.phase        = "bet_p2";
+        pendingEntry.phase = "bet_p2";
         saveMPGames();
         await updateUserCash(uid, -amount);
 
@@ -1172,8 +1285,8 @@ module.exports = {
 
       await updateUserCash(uid, -amount);
 
-      const theme    = "animaux";
-      const board    = createBoard(MP_CONFIG.cols, MP_CONFIG.pairs, theme);
+      const theme = "animaux";
+      const board = createBoard(MP_CONFIG.cols, MP_CONFIG.pairs, theme);
       const revealed = new Array(board.length).fill(false);
 
       const [p1Name, p2Name] = await Promise.all([getUserName(pendingEntry.uid, api), getUserName(uid, api)]);
@@ -1210,16 +1323,16 @@ module.exports = {
       if (activeGames.has(uid)) return message.reply(UI(["Game already in progress."]));
       if (mpGames.has(uid)) return message.reply(UI(["You have a pending multiplayer invitation. Finish or abandon it first."]));
 
-      const bet        = await parseAmount(args[1]);
+      const bet = await parseAmount(args[1]);
       const difficulty = DIFFICULTIES[args[2]?.toLowerCase()] ? args[2].toLowerCase() : "normal";
-      const theme      = CARD_THEMES[args[3]?.toLowerCase()] ? args[3].toLowerCase() : "animaux";
+      const theme = CARD_THEMES[args[3]?.toLowerCase()] ? args[3].toLowerCase() : "animaux";
 
       if (bet <= 0n) return message.reply(UI(["Invalid bet amount."]));
       const cash = await getUserCash(uid);
       if (bet > cash) return message.reply(UI(["Insufficient funds.", `Balance: ${await formatNumber(cash)}$`]));
 
       await updateUserCash(uid, -bet);
-      const diff  = DIFFICULTIES[difficulty];
+      const diff = DIFFICULTIES[difficulty];
       const board = createBoard(diff.cols, diff.pairs, theme);
 
       const game = {
@@ -1294,7 +1407,7 @@ module.exports = {
   },
 
   onChat: async function ({ message, event, api }) {
-    const uid  = String(event.senderID);
+    const uid = String(event.senderID);
     const body = (event.body || "").trim().toUpperCase();
 
     const response = body.match(/^(OUI|NON)$/);
@@ -1349,10 +1462,79 @@ module.exports = {
       }
     }
 
+    const numMatch = body.match(/^(\d+)$/);
+    if (numMatch && groupSelections.has(uid)) {
+      const selection = groupSelections.get(uid);
+      const num = parseInt(numMatch[1]) - 1;
+      const groups = selection.groups;
+
+      if (num >= 0 && num < groups.length) {
+        const selectedGroup = groups[num];
+        try {
+          const threadInfo = await api.getThreadInfo(selectedGroup.id);
+          if (!threadInfo) {
+            await message.reply(UI(["Error retrieving group information."]));
+            groupSelections.delete(uid);
+            saveGroupSelections();
+            return;
+          }
+
+          const participants = threadInfo.participantIDs || [];
+          const onlineUsers = threadInfo.onlineUsers || [];
+          const memberNames = await Promise.all(
+            participants.slice(0, 50).map(async (id) => {
+              const name = await getUserName(id, api);
+              const isOnline = onlineUsers.includes(id);
+              const status = isOnline ? "🟢" : "⚪";
+              return `${status} ${name} | ${id}`;
+            })
+          );
+
+          const lines = [
+            `📋 ${threadInfo.name || "Unnamed Group"}`,
+            "---",
+            `👥 ${participants.length} members`,
+            `🟢 ${onlineUsers.length} online`,
+            `🆔 ${selectedGroup.id}`,
+            "---"
+          ];
+
+          if (memberNames.length > 0) {
+            lines.push(...memberNames);
+            if (participants.length > 50) {
+              lines.push(`... and ${participants.length - 50} more`);
+            }
+          } else {
+            lines.push("No members found");
+          }
+
+          await message.reply(UI(lines));
+        } catch (error) {
+          await message.reply(UI(["Error retrieving group members."]));
+        }
+
+        groupSelections.delete(uid);
+        saveGroupSelections();
+        return;
+      } else {
+        await message.reply(UI([`Invalid number. Please choose between 1 and ${groups.length}.`]));
+        return;
+      }
+    }
+
     const twoCards = body.match(/^([A-Z]\d+)\s+([A-Z]\d+)$/);
-    const oneCard  = body.match(/^([A-Z]\d+)$/);
+    const oneCard = body.match(/^([A-Z]\d+)$/);
     if (!twoCards && !oneCard) return;
-    if (!activeGames.has(uid)) return;
+    
+    if (!activeGames.has(uid)) {
+      const onlineHit = findOnlineGame(uid);
+      if (!onlineHit) return;
+      const game = onlineHit.game;
+      const threadId = game.threadId || "";
+      const partnerThreadId = game.partnerThreadId || "";
+      if (threadId !== String(event.threadID) && partnerThreadId !== String(event.threadID)) return;
+    }
+    
     if (twoCards) await handleCoords(uid, twoCards[1], twoCards[2], message, event, api);
     else if (oneCard) await handleCoords(uid, oneCard[1], null, message, event, api);
   }
