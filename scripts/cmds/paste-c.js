@@ -1,3 +1,33 @@
+/**
+ * @typedef {Object} CommandConfig
+ * @property {string} name - The name of the command.
+ * @property {string} version - The version of the command.
+ * @property {string} author - The author of the command.
+ * @property {string[]} aliases - Alternative names for the command.
+ * @property {number} countDown - Cooldown time in seconds.
+ * @property {number} role - Minimum role required to use the command (0: user, 1: admin, 2: super admin).
+ * @property {Object} shortDescription - Short description of the command in multiple languages.
+ * @property {string} shortDescription.en - English short description.
+ * @property {Object} longDescription - Long description of the command in multiple languages.
+ * @property {string} longDescription.en - English long description.
+ * @property {string} category - Command category.
+ * @property {Object} guide - Usage guide in multiple languages.
+ * @property {string} guide.en - English usage guide.
+ */
+
+/**
+ * @typedef {Object} GoatBotContext
+ * @property {Object} api - The Facebook API wrapper.
+ * @property {Object} event - The event object containing message details.
+ * @property {string[]} args - Command arguments.
+ */
+
+/**
+ * Paste.c-net.org file uploader/downloader command for GoatBot.
+ * @type {Object}
+ * @property {CommandConfig} config - Command configuration.
+ * @property {Function} onStart - Command execution handler.
+ */
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
@@ -22,6 +52,11 @@ module.exports = {
  }
  },
 
+ /**
+  * Handles the paste-c command execution.
+  * @param {GoatBotContext} context - The command context.
+  * @returns {Promise<void>}
+  */
  onStart: async function({ api, event, args }) {
  const pasteServiceUrl = 'https://paste.c-net.org/';
  const maxFileSize = 1024 * 1024; // 1MB limit
