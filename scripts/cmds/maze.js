@@ -18,8 +18,6 @@ let playerStats = loadStats();
 let gameHistory = loadHistory();
 let playerStreaks = loadStreaks();
 
-const playerCache = new Map();
-
 if (!fs.existsSync(ASSETS_DIR)) fs.mkdirSync(ASSETS_DIR, { recursive: true });
 
 const TIERS = [
@@ -75,6 +73,8 @@ const SFX = {
   inf: MAX_LIMIT, infinity: MAX_LIMIT
 };
 
+// ─── Persistence ────────────────────────────────────────────────────────────
+
 function loadStats() {
   try {
     if (fs.existsSync(STATS_FILE)) return JSON.parse(fs.readFileSync(STATS_FILE, "utf8") || "{}");
@@ -104,6 +104,8 @@ function loadStreaks() {
 function saveStreaks() {
   try { fs.writeFileSync(STREAK_FILE, JSON.stringify(playerStreaks, null, 2)); } catch {}
 }
+
+// ─── Number helpers ──────────────────────────────────────────────────────────
 
 function toBigInt(v) {
   if (typeof v === "bigint") return v;
@@ -157,6 +159,8 @@ async function parseAmount(input) {
   return neg ? -base : base;
 }
 
+// ─── Cash API ────────────────────────────────────────────────────────────────
+
 async function getUserCash(uid) {
   try {
     const r = await axios.get(`${CASH_URL}/${uid}`, { timeout: 10000 });
@@ -177,6 +181,8 @@ async function updateUserCash(uid, amount) {
   } catch { return false; }
 }
 
+// ─── UI helpers ──────────────────────────────────────────────────────────────
+
 function UI(lines) {
   let out = "╭─────────────────────•\n";
   for (const l of lines) {
@@ -185,6 +191,8 @@ function UI(lines) {
   }
   return out + "╰─────────────────────•";
 }
+
+// ─── Stats & streaks ─────────────────────────────────────────────────────────
 
 function ensurePlayerStats(id) {
   if (!playerStats[id]) playerStats[id] = { wins: 0, losses: 0, played: 0, totalWon: "0", totalLost: "0" };
@@ -213,6 +221,8 @@ function addHistory(entry) {
   saveHistory();
 }
 
+// ─── Maze generation ─────────────────────────────────────────────────────────
+
 function generateMaze(rows, cols) {
   const grid = [];
   for (let r = 0; r < rows; r++) {
@@ -221,10 +231,8 @@ function generateMaze(rows, cols) {
       grid[r][c] = { top: true, bottom: true, left: true, right: true, visited: false };
     }
   }
-  const stack = [];
-  const start = { row: 0, col: 0 };
+  const stack = [{ row: 0, col: 0 }];
   grid[0][0].visited = true;
-  stack.push(start);
   while (stack.length > 0) {
     const current = stack[stack.length - 1];
     const neighbors = [];
@@ -236,31 +244,22 @@ function generateMaze(rows, cols) {
       neighbors.push({ row: current.row, col: current.col - 1, dir: "left" });
     if (current.col < cols - 1 && !grid[current.row][current.col + 1].visited)
       neighbors.push({ row: current.row, col: current.col + 1, dir: "right" });
-    if (neighbors.length === 0) {
-      stack.pop();
-      continue;
-    }
+    if (neighbors.length === 0) { stack.pop(); continue; }
     const next = neighbors[Math.floor(Math.random() * neighbors.length)];
     grid[next.row][next.col].visited = true;
-    if (next.dir === "top") { grid[current.row][current.col].top = false;
-      grid[next.row][next.col].bottom = false; }
-    if (next.dir === "bottom") { grid[current.row][current.col].bottom = false;
-      grid[next.row][next.col].top = false; }
-    if (next.dir === "left") { grid[current.row][current.col].left = false;
-      grid[next.row][next.col].right = false; }
-    if (next.dir === "right") { grid[current.row][current.col].right = false;
-      grid[next.row][next.col].left = false; }
+    if (next.dir === "top") { grid[current.row][current.col].top = false; grid[next.row][next.col].bottom = false; }
+    if (next.dir === "bottom") { grid[current.row][current.col].bottom = false; grid[next.row][next.col].top = false; }
+    if (next.dir === "left") { grid[current.row][current.col].left = false; grid[next.row][next.col].right = false; }
+    if (next.dir === "right") { grid[current.row][current.col].right = false; grid[next.row][next.col].left = false; }
     stack.push({ row: next.row, col: next.col });
   }
   return grid;
 }
 
 function findShortestPath(grid, startRow, startCol, endRow, endCol) {
-  const rows = grid.length;
-  const cols = grid[0].length;
+  const rows = grid.length, cols = grid[0].length;
   const queue = [{ row: startRow, col: startCol, path: [{ row: startRow, col: startCol }] }];
-  const visited = new Set();
-  visited.add(`${startRow},${startCol}`);
+  const visited = new Set([`${startRow},${startCol}`]);
   while (queue.length > 0) {
     const current = queue.shift();
     if (current.row === endRow && current.col === endCol) return current.path;
@@ -281,178 +280,30 @@ function findShortestPath(grid, startRow, startCol, endRow, endCol) {
   return null;
 }
 
-function rollDice() {
-  return Math.floor(Math.random() * 6) + 1;
-}
+// ─── Dice helpers ────────────────────────────────────────────────────────────
+
+function rollDice() { return Math.floor(Math.random() * 6) + 1; }
 
 function getDiceEmoji(value) {
-  const emojis = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
-  return emojis[value - 1] || "🎲";
+  return ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"][value - 1] || "🎲";
 }
 
 function getDirectionFromEmoji(emoji) {
-  const map = {
-    "⬆️": "haut",
-    "⬇️": "bas",
-    "⬅️": "gauche",
-    "➡️": "droite"
-  };
+  const map = { "⬆️": "haut", "⬇️": "bas", "⬅️": "gauche", "➡️": "droite" };
   return map[emoji] || null;
 }
 
-async function generateMazeImage({ grid, rows, cols, playerPos, exitPos, path, playerName, bet, time, moves, difficulty, players }) {
-  const W = 900, H = 900;
-  const canvas = createCanvas(W, H);
-  const ctx = canvas.getContext("2d");
-  const cellSize = Math.min(W / cols, H / rows) * 0.85;
-  const offsetX = (W - cellSize * cols) / 2;
-  const offsetY = (H - cellSize * rows) / 2 - 30;
-
-  const bg = ctx.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, "#07050f");
-  bg.addColorStop(0.5, "#0f0d20");
-  bg.addColorStop(1, "#070515");
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
-
-  ctx.fillStyle = "rgba(255,255,255,0.018)";
-  for (let x = 0; x < W; x += 34) for (let y = 0; y < H; y += 34) ctx.fillRect(x, y, 1.5, 1.5);
-
-  ctx.strokeStyle = "rgba(129,140,248,0.3)";
-  ctx.lineWidth = 2;
-  roundRect(ctx, 10, 10, W - 20, H - 20, 20);
-  ctx.stroke();
-
-  ctx.font = "bold 28px Arial";
-  ctx.fillStyle = "#818cf8";
-  ctx.textAlign = "center";
-  ctx.shadowColor = "#818cf8";
-  ctx.shadowBlur = 14;
-  ctx.fillText("HEDGEHOG LABYRINTHE", W / 2, 50);
-  ctx.shadowBlur = 0;
-
-  const infoY = 70;
-  ctx.fillStyle = "rgba(255,255,255,0.05)";
-  roundRect(ctx, 20, infoY, W - 40, 40, 8);
-  ctx.fill();
-
-  const infoItems = [
-    { label: "Joueur", value: playerName },
-    { label: "Mise", value: `${bet}$` },
-    { label: "Coups", value: moves },
-    { label: "Temps", value: time }
-  ];
-
-  if (players && players.length > 0) {
-    const roomInfo = players.map(p => p.current ? `⭐${p.name}` : p.name).join(" • ");
-    ctx.font = "12px Arial";
-    ctx.fillStyle = "#a78bfa";
-    ctx.textAlign = "center";
-    ctx.fillText(roomInfo, W / 2, infoY + 25);
+// Génère 6 boîtes avec les faces 1-6 mélangées aléatoirement
+function shuffleDiceBoxes() {
+  const faces = [1, 2, 3, 4, 5, 6];
+  for (let i = faces.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [faces[i], faces[j]] = [faces[j], faces[i]];
   }
-
-  ctx.font = "bold 13px Arial";
-  const spacing = (W - 40) / infoItems.length;
-  for (let i = 0; i < infoItems.length; i++) {
-    const x = 20 + i * spacing + spacing / 2;
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#818cf8";
-    ctx.fillText(`${infoItems[i].label}:`, x, infoY + 15);
-    ctx.fillStyle = "#e0e7ff";
-    ctx.fillText(infoItems[i].value, x, infoY + 32);
-  }
-
-  const mazeStartY = infoY + 55;
-
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const x = offsetX + c * cellSize;
-      const y = mazeStartY + r * cellSize;
-      const cell = grid[r][c];
-      ctx.strokeStyle = "rgba(129,140,248,0.6)";
-      ctx.lineWidth = 2;
-      if (cell.top) { ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x + cellSize, y);
-        ctx.stroke(); }
-      if (cell.bottom) { ctx.beginPath();
-        ctx.moveTo(x, y + cellSize);
-        ctx.lineTo(x + cellSize, y + cellSize);
-        ctx.stroke(); }
-      if (cell.left) { ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x, y + cellSize);
-        ctx.stroke(); }
-      if (cell.right) { ctx.beginPath();
-        ctx.moveTo(x + cellSize, y);
-        ctx.lineTo(x + cellSize, y + cellSize);
-        ctx.stroke(); }
-      if (playerPos.row === r && playerPos.col === c) {
-        ctx.shadowColor = "#34d399";
-        ctx.shadowBlur = 20;
-        ctx.fillStyle = "#34d399";
-        ctx.beginPath();
-        ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.15, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.font = "bold 22px Arial";
-        ctx.fillStyle = "#ffffff";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("🧑", x + cellSize / 2, y + cellSize / 2 + 2);
-        ctx.textBaseline = "alphabetic";
-      }
-      if (exitPos.row === r && exitPos.col === c) {
-        ctx.shadowColor = "#fbbf24";
-        ctx.shadowBlur = 20;
-        ctx.fillStyle = "#fbbf24";
-        ctx.beginPath();
-        ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.12, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.font = "bold 20px Arial";
-        ctx.fillStyle = "#ffffff";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("🏆", x + cellSize / 2, y + cellSize / 2 + 2);
-        ctx.textBaseline = "alphabetic";
-      }
-      if (path && path.some(p => p.row === r && p.col === c) && !(playerPos.row === r && playerPos.col === c)) {
-        ctx.fillStyle = "rgba(52,211,153,0.15)";
-        roundRect(ctx, x + 2, y + 2, cellSize - 4, cellSize - 4, 4);
-        ctx.fill();
-      }
-    }
-  }
-
-  const legendY = mazeStartY + rows * cellSize + 35;
-  const legendItems = [
-    { emoji: "🧑", label: "Toi" },
-    { emoji: "🏆", label: "Sortie" },
-    { emoji: "🟩", label: "Chemin" }
-  ];
-  ctx.fillStyle = "rgba(255,255,255,0.05)";
-  roundRect(ctx, (W - 300) / 2, legendY, 300, 30, 8);
-  ctx.fill();
-  ctx.font = "13px Arial";
-  for (let i = 0; i < legendItems.length; i++) {
-    const x = (W - 200) / 2 + i * 80;
-    ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(255,255,255,0.6)";
-    ctx.fillText(legendItems[i].emoji, x, legendY + 20);
-    ctx.fillStyle = "#9ca3af";
-    ctx.font = "11px Arial";
-    ctx.fillText(legendItems[i].label, x + 20, legendY + 20);
-    ctx.font = "13px Arial";
-  }
-
-  ctx.font = "10px Arial";
-  ctx.fillStyle = "rgba(129,140,248,0.2)";
-  ctx.textAlign = "center";
-  ctx.fillText(`${difficulty || "Normal"} • ${rows}x${cols}`, W / 2, H - 14);
-
-  return canvas.toBuffer("image/png");
+  return faces;
 }
+
+// ─── Canvas helpers ──────────────────────────────────────────────────────────
 
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -468,23 +319,182 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// ─── Maze image generation ───────────────────────────────────────────────────
+
+async function generateMazeImage({ grid, rows, cols, playerPos, exitPos, path, playerName, bet, time, moves, difficulty, players }) {
+  const W = 900, H = 900;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext("2d");
+  const cellSize = Math.min(W / cols, H / rows) * 0.85;
+  const offsetX = (W - cellSize * cols) / 2;
+
+  // Background gradient
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, "#07050f");
+  bg.addColorStop(0.5, "#0f0d20");
+  bg.addColorStop(1, "#070515");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid dots
+  ctx.fillStyle = "rgba(255,255,255,0.018)";
+  for (let x = 0; x < W; x += 34) for (let y = 0; y < H; y += 34) ctx.fillRect(x, y, 1.5, 1.5);
+
+  // Border
+  ctx.strokeStyle = "rgba(129,140,248,0.3)";
+  ctx.lineWidth = 2;
+  roundRect(ctx, 10, 10, W - 20, H - 20, 20);
+  ctx.stroke();
+
+  // Title
+  ctx.font = "bold 28px Arial";
+  ctx.fillStyle = "#818cf8";
+  ctx.textAlign = "center";
+  ctx.shadowColor = "#818cf8";
+  ctx.shadowBlur = 14;
+  ctx.fillText("HEDGEHOG LABYRINTHE", W / 2, 50);
+  ctx.shadowBlur = 0;
+
+  // Info bar
+  const infoY = 70;
+  ctx.fillStyle = "rgba(255,255,255,0.05)";
+  roundRect(ctx, 20, infoY, W - 40, 40, 8);
+  ctx.fill();
+
+  const infoItems = [
+    { label: "Joueur", value: playerName },
+    { label: "Mise", value: `${bet}$` },
+    { label: "Coups", value: String(moves) },
+    { label: "Temps", value: time }
+  ];
+
+  ctx.font = "bold 13px Arial";
+  const spacing = (W - 40) / infoItems.length;
+  for (let i = 0; i < infoItems.length; i++) {
+    const x = 20 + i * spacing + spacing / 2;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#818cf8";
+    ctx.fillText(`${infoItems[i].label}:`, x, infoY + 15);
+    ctx.fillStyle = "#e0e7ff";
+    ctx.fillText(infoItems[i].value, x, infoY + 32);
+  }
+
+  // Multi-player list
+  if (players && players.length > 1) {
+    const roomInfo = players.map(pl => pl.current ? `⭐${pl.name}` : pl.name).join(" • ");
+    ctx.font = "11px Arial";
+    ctx.fillStyle = "#a78bfa";
+    ctx.textAlign = "center";
+    ctx.fillText(roomInfo, W / 2, infoY + 50);
+  }
+
+  const mazeStartY = players && players.length > 1 ? infoY + 65 : infoY + 55;
+
+  // Draw maze cells
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = offsetX + c * cellSize;
+      const y = mazeStartY + r * cellSize;
+      const cell = grid[r][c];
+
+      // Highlight path
+      if (path && path.some(p => p.row === r && p.col === c) &&
+          !(playerPos.row === r && playerPos.col === c)) {
+        ctx.fillStyle = "rgba(52,211,153,0.15)";
+        roundRect(ctx, x + 2, y + 2, cellSize - 4, cellSize - 4, 4);
+        ctx.fill();
+      }
+
+      // Walls
+      ctx.strokeStyle = "rgba(129,140,248,0.6)";
+      ctx.lineWidth = 2;
+      if (cell.top) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + cellSize, y); ctx.stroke(); }
+      if (cell.bottom) { ctx.beginPath(); ctx.moveTo(x, y + cellSize); ctx.lineTo(x + cellSize, y + cellSize); ctx.stroke(); }
+      if (cell.left) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + cellSize); ctx.stroke(); }
+      if (cell.right) { ctx.beginPath(); ctx.moveTo(x + cellSize, y); ctx.lineTo(x + cellSize, y + cellSize); ctx.stroke(); }
+
+      const cx = x + cellSize / 2;
+      const cy = y + cellSize / 2;
+
+      // Player marker
+      if (playerPos.row === r && playerPos.col === c) {
+        ctx.shadowColor = "#34d399";
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = "#34d399";
+        ctx.beginPath();
+        ctx.arc(cx, cy, cellSize * 0.28, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.font = `bold ${Math.floor(cellSize * 0.4)}px Arial`;
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("🧑", cx, cy + 2);
+        ctx.textBaseline = "alphabetic";
+      }
+
+      // Exit marker
+      if (exitPos.row === r && exitPos.col === c) {
+        ctx.shadowColor = "#fbbf24";
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = "rgba(251,191,36,0.2)";
+        ctx.beginPath();
+        ctx.arc(cx, cy, cellSize * 0.28, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.font = `bold ${Math.floor(cellSize * 0.4)}px Arial`;
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("🏆", cx, cy + 2);
+        ctx.textBaseline = "alphabetic";
+      }
+    }
+  }
+
+  // Legend
+  const legendY = mazeStartY + rows * cellSize + 30;
+  ctx.fillStyle = "rgba(255,255,255,0.05)";
+  roundRect(ctx, (W - 300) / 2, legendY, 300, 28, 8);
+  ctx.fill();
+  const legendItems = [{ emoji: "🧑", label: "Toi" }, { emoji: "🏆", label: "Sortie" }, { emoji: "🟩", label: "Chemin" }];
+  ctx.textBaseline = "middle";
+  for (let i = 0; i < legendItems.length; i++) {
+    const lx = (W - 300) / 2 + 50 + i * 100;
+    ctx.font = "14px Arial";
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.textAlign = "center";
+    ctx.fillText(`${legendItems[i].emoji} ${legendItems[i].label}`, lx, legendY + 14);
+  }
+  ctx.textBaseline = "alphabetic";
+
+  // Footer
+  ctx.font = "10px Arial";
+  ctx.fillStyle = "rgba(129,140,248,0.3)";
+  ctx.textAlign = "center";
+  ctx.fillText(`${difficulty || "Normal"} • ${rows}x${cols}`, W / 2, H - 14);
+
+  return canvas.toBuffer("image/png");
+}
+
+// ─── Room management ─────────────────────────────────────────────────────────
+
+const DIFFICULTY_CONFIGS = {
+  facile:    { rows: 5,  cols: 5,  timeLimit: 90  },
+  normal:    { rows: 7,  cols: 7,  timeLimit: 120 },
+  difficile: { rows: 9,  cols: 9,  timeLimit: 150 },
+  extreme:   { rows: 12, cols: 12, timeLimit: 200 }
+};
+
 function createRoom(roomId, creatorId, creatorName, bet, difficulty = "normal") {
-  const configs = {
-    facile: { rows: 5, cols: 5, timeLimit: 90 },
-    normal: { rows: 7, cols: 7, timeLimit: 120 },
-    difficile: { rows: 9, cols: 9, timeLimit: 150 },
-    extreme: { rows: 12, cols: 12, timeLimit: 200 }
-  };
-  const config = configs[difficulty] || configs.normal;
+  const config = DIFFICULTY_CONFIGS[difficulty] || DIFFICULTY_CONFIGS.normal;
   const grid = generateMaze(config.rows, config.cols);
-  const start = { row: 0, col: 0 };
-  const exit = { row: config.rows - 1, col: config.cols - 1 };
 
   rooms[roomId] = {
     grid,
     rows: config.rows,
     cols: config.cols,
-    exitPos: exit,
+    exitPos: { row: config.rows - 1, col: config.cols - 1 },
     difficulty,
     timeLimit: config.timeLimit,
     players: [{ id: creatorId, name: creatorName, pos: { row: 0, col: 0 }, path: [{ row: 0, col: 0 }], moves: 0, current: true }],
@@ -494,6 +504,7 @@ function createRoom(roomId, creatorId, creatorName, bet, difficulty = "normal") 
     currentPlayerIndex: 0,
     turnPhase: "dice",
     diceValue: null,
+    diceBoxes: shuffleDiceBoxes(),
     waitingForMoves: false,
     pendingMoves: [],
     maxPlayers: 8,
@@ -508,14 +519,7 @@ function addPlayerToRoom(roomId, playerId, playerName) {
   if (!room) return null;
   if (room.players.length >= room.maxPlayers) return "full";
   if (room.players.find(p => p.id === playerId)) return "already";
-  room.players.push({
-    id: playerId,
-    name: playerName,
-    pos: { row: 0, col: 0 },
-    path: [{ row: 0, col: 0 }],
-    moves: 0,
-    current: false
-  });
+  room.players.push({ id: playerId, name: playerName, pos: { row: 0, col: 0 }, path: [{ row: 0, col: 0 }], moves: 0, current: false });
   return room;
 }
 
@@ -526,97 +530,93 @@ function getPlayerRoom(playerId) {
   return null;
 }
 
-function getPlayerInRoom(room, playerId) {
-  return room.players.find(p => p.id === playerId);
-}
+function getPlayerInRoom(room, playerId) { return room.players.find(p => p.id === playerId); }
 
-function getCurrentPlayer(room) {
-  return room.players[room.currentPlayerIndex];
-}
+function getCurrentPlayer(room) { return room.players[room.currentPlayerIndex]; }
 
 function nextTurn(room) {
   room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.players.length;
   room.turnPhase = "dice";
   room.diceValue = null;
+  room.diceBoxes = shuffleDiceBoxes();
   room.waitingForMoves = false;
   room.pendingMoves = [];
+  for (const p of room.players) p.current = false;
   const player = getCurrentPlayer(room);
   if (player) player.current = true;
-  for (const p of room.players) {
-    if (p.id !== player?.id) p.current = false;
-  }
-  return getCurrentPlayer(room);
+  return player;
 }
 
 function processRoomMove(room, playerId, direction) {
   const player = getPlayerInRoom(room, playerId);
-  if (!player) return null;
-  if (!room.waitingForMoves) return null;
+  if (!player || !room.waitingForMoves) return null;
   if (room.pendingMoves.length >= room.diceValue) return null;
 
   const { grid, rows, cols } = room;
-  let newRow = player.pos.row;
-  let newCol = player.pos.col;
+  let newRow = player.pos.row, newCol = player.pos.col;
 
   switch (direction) {
     case "haut":
-      if (!grid[player.pos.row][player.pos.col].top && player.pos.row > 0) newRow--;
-      else return null;
+      if (grid[newRow][newCol].top || newRow <= 0) return null;
+      newRow--;
       break;
     case "bas":
-      if (!grid[player.pos.row][player.pos.col].bottom && player.pos.row < rows - 1) newRow++;
-      else return null;
+      if (grid[newRow][newCol].bottom || newRow >= rows - 1) return null;
+      newRow++;
       break;
     case "gauche":
-      if (!grid[player.pos.row][player.pos.col].left && player.pos.col > 0) newCol--;
-      else return null;
+      if (grid[newRow][newCol].left || newCol <= 0) return null;
+      newCol--;
       break;
     case "droite":
-      if (!grid[player.pos.row][player.pos.col].right && player.pos.col < cols - 1) newCol++;
-      else return null;
+      if (grid[newRow][newCol].right || newCol >= cols - 1) return null;
+      newCol++;
       break;
     default:
       return null;
   }
 
-  player.pos.row = newRow;
-  player.pos.col = newCol;
+  player.pos = { row: newRow, col: newCol };
   player.moves++;
   player.path.push({ row: newRow, col: newCol });
   room.pendingMoves.push(direction);
 
-  if (newRow === room.exitPos.row && newCol === room.exitPos.col) {
-    return { type: "win", player };
-  }
-
+  if (newRow === room.exitPos.row && newCol === room.exitPos.col) return { type: "win", player };
   return { type: "move", player };
 }
 
-function finishTurn(room) {
-  room.waitingForMoves = false;
-  room.turnPhase = "dice";
+// ─── Image sender ────────────────────────────────────────────────────────────
+// FIX: All async operations are now properly awaited before the sendMessage callback
 
-  const current = getCurrentPlayer(room);
-  if (current.pos.row === room.exitPos.row && current.pos.col === room.exitPos.col) {
-    return { type: "win", player: current };
-  }
-
-  const elapsed = (Date.now() - room.startTime) / 1000;
-  if (elapsed >= room.timeLimit) {
-    return { type: "timeout" };
-  }
-
-  nextTurn(room);
-  return { type: "next", player: getCurrentPlayer(room) };
-}
-
-async function sendMazeImage(api, threadID, roomId, message = "") {
+async function sendMazeImage(api, threadID, roomId, message) {
   const room = rooms[roomId];
   if (!room) return;
 
   const current = getCurrentPlayer(room);
   const elapsed = Math.floor((Date.now() - room.startTime) / 1000);
   const timeLeft = Math.max(0, room.timeLimit - elapsed);
+  const timeStr = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
+
+  // Resolve bet string BEFORE entering callback (was the main syntax/async bug)
+  const betStr = await formatNumber(room.bet);
+
+  // Build default message if none provided
+  const bodyText = message || UI([
+    "🧩 LABYRINTHE",
+    "---",
+    `👤 ${current.name} (${room.currentPlayerIndex + 1}/${room.players.length})`,
+    `💰 Mise: ${betStr}$`,
+    `🚶 Coups: ${current.moves}`,
+    `🎲 Dés: ${room.diceValue ? getDiceEmoji(room.diceValue) + " " + room.diceValue : "❓"}`,
+    `⏱️ Temps: ${timeStr} / ${room.timeLimit}s`,
+    `⏳ Restant: ${timeLeft}s`,
+    "---",
+    room.turnPhase === "dice"
+      ? "Choisis une boîte (1-6) pour lancer le dé"
+      : room.turnPhase === "move"
+        ? `Tu as ${room.pendingMoves.length}/${room.diceValue} déplacements. Envoie ⬆️⬇️⬅️➡️`
+        : "En attente..."
+  ]);
 
   const img = await generateMazeImage({
     grid: room.grid,
@@ -626,8 +626,8 @@ async function sendMazeImage(api, threadID, roomId, message = "") {
     exitPos: room.exitPos,
     path: current.path,
     playerName: current.name,
-    bet: await formatNumber(room.bet),
-    time: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`,
+    bet: betStr,
+    time: timeStr,
     moves: current.moves,
     difficulty: room.difficulty,
     players: room.players
@@ -635,34 +635,97 @@ async function sendMazeImage(api, threadID, roomId, message = "") {
 
   const fp = path.join(ASSETS_DIR, `maze_${roomId}_${Date.now()}.png`);
   await fs.writeFile(fp, img);
-  await new Promise((resolve, reject) => {
-    api.sendMessage({
-      body: message || UI([
-        "🧩 LABYRINTHE",
-        "---",
-        `👤 ${current.name} (${room.currentPlayerIndex + 1}/${room.players.length})`,
-        `💰 Mise: ${await formatNumber(room.bet)}$`,
-        `🚶 Coups: ${current.moves}`,
-        `🎲 Dés: ${room.diceValue || "❓"}`,
-        `⏱️ Temps: ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")} / ${room.timeLimit}s`,
-        "---",
-        room.turnPhase === "dice" ? "Choisis une boîte (1-6) pour lancer le dé" :
-        room.turnPhase === "move" ? `Tu as ${room.diceValue} déplacements. Envoie ⬆️⬇️⬅️➡️` :
-        "En attente..."
-      ]),
-      attachment: fs.createReadStream(fp)
-    }, threadID, (err) => {
-      try { if (fs.existsSync(fp)) fs.unlinkSync(fp); } catch {}
-      err ? reject(err) : resolve();
-    });
+
+  return new Promise((resolve, reject) => {
+    api.sendMessage(
+      { body: bodyText, attachment: fs.createReadStream(fp) },
+      threadID,
+      (err) => {
+        try { if (fs.existsSync(fp)) fs.unlinkSync(fp); } catch {}
+        err ? reject(err) : resolve();
+      }
+    );
   });
 }
+
+// ─── Win handler (shared logic) ───────────────────────────────────────────────
+
+async function handleWin(api, threadID, roomId, winPlayer) {
+  const room = rooms[roomId];
+  room.finished = true;
+  room.inProgress = false;
+
+  const totalBet = room.bet * BigInt(room.players.length);
+  await updateUserCash(winPlayer.id, totalBet);
+  const gainStr = await formatNumber(totalBet);
+
+  ensurePlayerStats(winPlayer.id);
+  playerStats[winPlayer.id].wins++;
+  playerStats[winPlayer.id].played++;
+  updateStreak(winPlayer.id, true);
+
+  for (const p of room.players) {
+    if (p.id !== winPlayer.id) {
+      ensurePlayerStats(p.id);
+      playerStats[p.id].losses++;
+      playerStats[p.id].played++;
+      updateStreak(p.id, false);
+    }
+  }
+  saveStats();
+
+  addHistory({
+    player: winPlayer.id,
+    won: true,
+    moves: winPlayer.moves,
+    difficulty: room.difficulty,
+    players: room.players.length,
+    isRoom: room.players.length > 1
+  });
+
+  await sendMazeImage(api, threadID, roomId, UI([
+    "🎉 VICTOIRE !",
+    "---",
+    `🏆 ${winPlayer.name} a trouvé la sortie !`,
+    `🚶 Coups: ${winPlayer.moves}`,
+    `💰 Gain: +${gainStr}$`,
+    "---",
+    "🎊 Félicitations !"
+  ]));
+
+  delete rooms[roomId];
+}
+
+async function handleTimeout(api, threadID, roomId) {
+  const room = rooms[roomId];
+  room.finished = true;
+  room.inProgress = false;
+
+  for (const p of room.players) {
+    ensurePlayerStats(p.id);
+    playerStats[p.id].losses++;
+    playerStats[p.id].played++;
+    updateStreak(p.id, false);
+  }
+  saveStats();
+
+  await sendMazeImage(api, threadID, roomId, UI([
+    "⏰ TEMPS ÉCOULÉ !",
+    "---",
+    "Personne n'a trouvé la sortie à temps.",
+    "La mise est perdue."
+  ]));
+
+  delete rooms[roomId];
+}
+
+// ─── Main module ─────────────────────────────────────────────────────────────
 
 module.exports = {
   config: {
     name: "maze",
     aliases: ["labyrinthe", "laby"],
-    version: "2.0",
+    version: "2.1",
     author: "Ismael03-Dev",
     category: "game",
     shortDescription: { en: "Labyrinth game" },
@@ -678,6 +741,7 @@ module.exports = {
 
     ensurePlayerStats(senderID);
 
+    // ── Help ──────────────────────────────────────────────────────────────────
     if (!sub || sub === "help") {
       return api.sendMessage(UI([
         "🧩 LABYRINTHE",
@@ -686,17 +750,18 @@ module.exports = {
         `${p}maze @joueur <mise> [difficulte]`,
         `${p}maze room create <mise> [difficulte]`,
         `${p}maze room join`,
+        `${p}maze room start`,
         `${p}maze stats`,
         `${p}maze history`,
         `${p}maze leaderboard`,
         `${p}maze abandon`,
         "---",
-        "Difficultes: facile/normal/difficile/extreme",
-        "Room: 2 a 8 joueurs",
-        "Deplacements: ⬆️ ⬇️ ⬅️ ➡️"
+        "Difficultes: facile | normal | difficile | extreme",
+        "Déplacements: ⬆️ ⬇️ ⬅️ ➡️"
       ]), threadID);
     }
 
+    // ── Stats ─────────────────────────────────────────────────────────────────
     if (sub === "stats") {
       const stats = playerStats[senderID] || { wins: 0, losses: 0, played: 0 };
       const streak = playerStreaks[senderID] || { current: 0, best: 0 };
@@ -705,31 +770,35 @@ module.exports = {
       return api.sendMessage(UI([
         `📊 STATS — ${name}`,
         "---",
-        `Victoires: ${stats.wins}`,
-        `Defaites: ${stats.losses}`,
-        `Parties: ${stats.played}`,
-        `Winrate: ${wr}%`,
-        `🔥 Streak: ${streak.current}`,
+        `✅ Victoires: ${stats.wins}`,
+        `❌ Défaites: ${stats.losses}`,
+        `🎮 Parties: ${stats.played}`,
+        `📈 Winrate: ${wr}%`,
+        `🔥 Streak actuel: ${streak.current}`,
         `🏆 Meilleur streak: ${streak.best}`
       ]), threadID);
     }
 
+    // ── History ───────────────────────────────────────────────────────────────
     if (sub === "history") {
       const userHistory = gameHistory.filter(h => h.player === senderID).slice(0, 10);
-      if (userHistory.length === 0) return api.sendMessage(UI(["Aucun historique."]));
+      if (userHistory.length === 0) return api.sendMessage(UI(["📜 Aucun historique."]), threadID);
       const lines = ["📜 HISTORIQUE", "---"];
       for (const h of userHistory) {
         const date = new Date(h.timestamp).toLocaleString("fr-FR");
-        const result = h.won ? "✅ Victoire" : "❌ Defaite";
-        lines.push(`${result} | ${h.moves} coups | ${h.difficulty} | ${date}`);
-        lines.push("---");
+        lines.push(`${h.won ? "✅" : "❌"} ${h.moves} coups | ${h.difficulty} | ${date}`);
+        if (lines.length < 40) lines.push("---");
       }
       return api.sendMessage(UI(lines), threadID);
     }
 
+    // ── Leaderboard ───────────────────────────────────────────────────────────
     if (sub === "leaderboard") {
-      const sorted = Object.entries(playerStats).filter(([id]) => id !== "AI").sort((a, b) => b[1].wins - a[1].wins).slice(0, 10);
-      if (sorted.length === 0) return api.sendMessage(UI(["Aucun joueur."]));
+      const sorted = Object.entries(playerStats)
+        .filter(([id]) => id !== "AI")
+        .sort((a, b) => b[1].wins - a[1].wins)
+        .slice(0, 10);
+      if (sorted.length === 0) return api.sendMessage(UI(["Aucun joueur."]), threadID);
       const lines = ["🏆 CLASSEMENT", "---"];
       const medals = ["🥇", "🥈", "🥉"];
       for (let i = 0; i < sorted.length; i++) {
@@ -737,125 +806,132 @@ module.exports = {
         const name = await usersData.getName(id).catch(() => `User ${id}`);
         const wr = st.played > 0 ? Math.round(st.wins / st.played * 100) : 0;
         lines.push(`${medals[i] || `${i + 1}.`} ${name}`);
-        lines.push(`   ${st.wins}V/${st.losses}D | ${wr}% | ${st.played} parties`);
-        lines.push("---");
+        lines.push(`   ${st.wins}V / ${st.losses}D | ${wr}% | ${st.played} parties`);
+        if (i < sorted.length - 1) lines.push("---");
       }
       return api.sendMessage(UI(lines), threadID);
     }
 
+    // ── Abandon ───────────────────────────────────────────────────────────────
     if (sub === "abandon" || sub === "quit") {
       const roomId = getPlayerRoom(senderID);
       if (!roomId) {
         const gameId = Object.keys(games).find(id => games[id].playerID === senderID);
-        if (gameId) { delete games[gameId]; return api.sendMessage(UI(["Partie abandonnee."])); }
-        return api.sendMessage(UI(["Aucune partie en cours."]));
+        if (gameId) { delete games[gameId]; return api.sendMessage(UI(["Partie abandonnée."]), threadID); }
+        return api.sendMessage(UI(["Aucune partie en cours."]), threadID);
       }
       const room = rooms[roomId];
       const player = getPlayerInRoom(room, senderID);
       if (player) {
-        room.players = room.players.filter(p => p.id !== senderID);
+        room.players = room.players.filter(pl => pl.id !== senderID);
         if (room.players.length < room.minPlayers) {
           delete rooms[roomId];
-          return api.sendMessage(UI(["Partie annulee (trop peu de joueurs)."]));
+          return api.sendMessage(UI(["Partie annulée (trop peu de joueurs)."]), threadID);
         }
         if (room.currentPlayerIndex >= room.players.length) room.currentPlayerIndex = 0;
-        if (room.players.length > 0) {
-          for (const p of room.players) p.current = false;
-          const next = getCurrentPlayer(room);
-          next.current = true;
-          room.turnPhase = "dice";
-          room.diceValue = null;
-          await sendMazeImage(api, threadID, roomId, UI([`${player.name} a abandonne.`, `Tour de ${next.name}.`]));
-        }
+        for (const pl of room.players) pl.current = false;
+        const next = getCurrentPlayer(room);
+        if (next) next.current = true;
+        room.turnPhase = "dice";
+        room.diceValue = null;
+        await sendMazeImage(api, threadID, roomId, UI([
+          `${player.name} a abandonné la partie.`,
+          "---",
+          next ? `C'est au tour de ${next.name}.` : "Fin de partie.",
+          next ? "Choisis une boîte (1-6)" : ""
+        ].filter(Boolean)));
       }
-      return api.sendMessage(UI(["Tu as quitte la partie."]));
+      return;
     }
 
+    // ── Room commands ─────────────────────────────────────────────────────────
     if (sub === "room") {
       const sub2 = (args[1] || "").toLowerCase();
 
+      // room create
       if (sub2 === "create") {
         const bet = await parseAmount(args[2]);
         const difficulty = (args[3] || "normal").toLowerCase();
-        const validDifficulties = ["facile", "normal", "difficile", "extreme"];
 
-        if (bet <= 0n) return api.sendMessage(UI(["❌ Mise invalide."]));
-        if (!validDifficulties.includes(difficulty)) return api.sendMessage(UI(["❌ Difficulté invalide.", "Choix: facile/normal/difficile/extreme"]));
-
-        const existingRoom = getPlayerRoom(senderID);
-        if (existingRoom) return api.sendMessage(UI(["Tu es deja dans une room."]));
+        if (bet <= 0n) return api.sendMessage(UI(["❌ Mise invalide."]), threadID);
+        if (!DIFFICULTY_CONFIGS[difficulty]) return api.sendMessage(UI(["❌ Difficulté invalide.", "Choix: facile / normal / difficile / extreme"]), threadID);
+        if (getPlayerRoom(senderID)) return api.sendMessage(UI(["Tu es déjà dans une room."]), threadID);
 
         const cash = await getUserCash(senderID);
-        if (bet > cash) return api.sendMessage(UI(["💰 Fonds insuffisants", `Solde: ${await formatNumber(cash)}$`]));
+        if (bet > cash) return api.sendMessage(UI(["💰 Fonds insuffisants.", `Solde: ${await formatNumber(cash)}$`]), threadID);
 
         await updateUserCash(senderID, -bet);
-
         const name = (await usersData.getName(senderID)) || `Player ${senderID}`;
         const roomId = `room_${threadID}_${Date.now()}`;
         createRoom(roomId, senderID, name, bet, difficulty);
+        const betStr = await formatNumber(bet);
 
         await sendMazeImage(api, threadID, roomId, UI([
-          "🏠 ROOM CREE",
+          "🏠 ROOM CRÉÉ",
           "---",
-          `👤 Hote: ${name}`,
-          `💰 Mise: ${await formatNumber(bet)}$`,
+          `👤 Hôte: ${name}`,
+          `💰 Mise: ${betStr}$`,
           `📊 Niveau: ${difficulty}`,
           `👥 Joueurs: 1/${rooms[roomId].maxPlayers}`,
           "---",
-          `${p}maze room join pour rejoindre`,
-          `${p}maze room start pour lancer`
+          `${p}maze room join — pour rejoindre`,
+          `${p}maze room start — pour lancer`
         ]));
         return;
       }
 
+      // room join
       if (sub2 === "join") {
         const roomId = Object.keys(rooms).find(id =>
           rooms[id].inProgress && !rooms[id].finished && rooms[id].players.length < rooms[id].maxPlayers
         );
-        if (!roomId) return api.sendMessage(UI(["Aucune room disponible."]));
-
-        const existingRoom = getPlayerRoom(senderID);
-        if (existingRoom) return api.sendMessage(UI(["Tu es deja dans une room."]));
+        if (!roomId) return api.sendMessage(UI(["Aucune room disponible."]), threadID);
+        if (getPlayerRoom(senderID)) return api.sendMessage(UI(["Tu es déjà dans une room."]), threadID);
 
         const room = rooms[roomId];
         const cash = await getUserCash(senderID);
-        if (room.bet > cash) return api.sendMessage(UI(["💰 Fonds insuffisants", `Solde: ${await formatNumber(cash)}$`, `Mise: ${await formatNumber(room.bet)}$`]));
+        if (room.bet > cash) {
+          const [betStr, cashStr] = await Promise.all([formatNumber(room.bet), formatNumber(cash)]);
+          return api.sendMessage(UI(["💰 Fonds insuffisants.", `Solde: ${cashStr}$`, `Mise requise: ${betStr}$`]), threadID);
+        }
 
         await updateUserCash(senderID, -room.bet);
-
         const name = (await usersData.getName(senderID)) || `Player ${senderID}`;
         const result = addPlayerToRoom(roomId, senderID, name);
 
-        if (result === "full") return api.sendMessage(UI(["❌ Room pleine."]));
-        if (result === "already") return api.sendMessage(UI(["❌ Deja dans la room."]));
+        if (result === "full") return api.sendMessage(UI(["❌ Room pleine."]), threadID);
+        if (result === "already") return api.sendMessage(UI(["❌ Tu es déjà dans la room."]), threadID);
 
         await sendMazeImage(api, threadID, roomId, UI([
-          "✅ REJOINT",
+          "✅ REJOINT !",
           "---",
-          `${name} a rejoint la room !`,
+          `${name} a rejoint la room.`,
           `👥 Joueurs: ${room.players.length}/${room.maxPlayers}`,
           "---",
-          `${p}maze room start pour lancer`,
-          `${p}maze room info pour voir la room`
+          `${p}maze room start — pour lancer`,
+          `${p}maze room info — pour voir la room`
         ]));
         return;
       }
 
+      // room start
       if (sub2 === "start") {
         const roomId = Object.keys(rooms).find(id =>
-          rooms[id].players.some(p => p.id === senderID) && rooms[id].inProgress && !rooms[id].finished
+          rooms[id].players.some(pl => pl.id === senderID) && rooms[id].inProgress && !rooms[id].finished
         );
-        if (!roomId) return api.sendMessage(UI(["Aucune room trouvee."]));
+        if (!roomId) return api.sendMessage(UI(["Aucune room trouvée."]), threadID);
 
         const room = rooms[roomId];
         if (room.players.length < room.minPlayers) {
-          return api.sendMessage(UI([`Il faut ${room.minPlayers} joueurs minimum. Actuel: ${room.players.length}`]));
+          return api.sendMessage(UI([
+            `Il faut au moins ${room.minPlayers} joueurs.`,
+            `Actuellement: ${room.players.length} joueur(s)`
+          ]), threadID);
         }
 
-        room.inProgress = true;
-        room.turnPhase = "dice";
         room.startTime = Date.now();
-
+        room.turnPhase = "dice";
+        room.diceBoxes = shuffleDiceBoxes();
         for (let i = 0; i < room.players.length; i++) {
           room.players[i].current = i === 0;
           room.players[i].pos = { row: 0, col: 0 };
@@ -863,37 +939,40 @@ module.exports = {
           room.players[i].moves = 0;
         }
 
+        const first = getCurrentPlayer(room);
         await sendMazeImage(api, threadID, roomId, UI([
-          "🎮 PARTIE LANCEE !",
+          "🎮 PARTIE LANCÉE !",
           "---",
           `👥 ${room.players.length} joueurs`,
-          `🎯 Sortie: trouver la 🏆`,
-          `🎲 Chaque tour: lancer un dé et se deplacer`,
+          `🏆 Objectif: atteindre la sortie en premier`,
+          `🎲 Chaque tour: choisis une boîte (1-6) puis navigue`,
           "---",
-          `${getCurrentPlayer(room).name}, choisis une boîte (1-6)`
+          `${first.name}, c'est toi qui commences ! Choisis une boîte (1-6).`
         ]));
         return;
       }
 
+      // room info
       if (sub2 === "info") {
         const roomId = getPlayerRoom(senderID);
-        if (!roomId) return api.sendMessage(UI(["Tu n'es dans aucune room."]));
-
+        if (!roomId) return api.sendMessage(UI(["Tu n'es dans aucune room."]), threadID);
         const room = rooms[roomId];
-        const lines = ["🏠 ROOM INFO", "---"];
-        lines.push(`📊 Niveau: ${room.difficulty}`);
-        lines.push(`💰 Mise: ${await formatNumber(room.bet)}$`);
-        lines.push(`👥 Joueurs: ${room.players.length}/${room.maxPlayers}`);
-        lines.push("---");
-        for (const p of room.players) {
-          const status = p.current ? "⭐" : "";
-          lines.push(`${status} ${p.name} (${p.moves} coups)`);
+        const betStr = await formatNumber(room.bet);
+        const lines = ["🏠 ROOM INFO", "---",
+          `📊 Niveau: ${room.difficulty}`,
+          `💰 Mise: ${betStr}$`,
+          `👥 Joueurs: ${room.players.length}/${room.maxPlayers}`,
+          "---"
+        ];
+        for (const pl of room.players) {
+          lines.push(`${pl.current ? "⭐" : "  "} ${pl.name} — ${pl.moves} coup(s)`);
         }
         return api.sendMessage(UI(lines), threadID);
       }
 
+      // room help
       return api.sendMessage(UI([
-        "🏠 ROOM COMMANDES",
+        "🏠 COMMANDES ROOM",
         "---",
         `${p}maze room create <mise> [difficulte]`,
         `${p}maze room join`,
@@ -902,44 +981,32 @@ module.exports = {
       ]), threadID);
     }
 
+    // ── Duel via @mention ─────────────────────────────────────────────────────
     const mentions = event.mentions || {};
     const targetId = Object.keys(mentions)[0] || null;
 
     if (targetId) {
       const bet = await parseAmount(args[1]);
       const difficulty = (args[2] || "normal").toLowerCase();
-      const validDifficulties = ["facile", "normal", "difficile", "extreme"];
 
-      if (bet <= 0n) return api.sendMessage(UI(["❌ Mise invalide."]));
-      if (!validDifficulties.includes(difficulty)) return api.sendMessage(UI(["❌ Difficulté invalide."]));
+      if (bet <= 0n) return api.sendMessage(UI(["❌ Mise invalide."]), threadID);
+      if (!DIFFICULTY_CONFIGS[difficulty]) return api.sendMessage(UI(["❌ Difficulté invalide."]), threadID);
+      if (getPlayerRoom(senderID)) return api.sendMessage(UI(["Tu es déjà dans une room."]), threadID);
 
       const targetName = mentions[targetId] || (await usersData.getName(targetId)) || `Player ${targetId}`;
       const playerName = (await usersData.getName(senderID)) || `Player ${senderID}`;
 
-      const existingRoom = getPlayerRoom(senderID);
-      if (existingRoom) return api.sendMessage(UI(["Tu es deja dans une room."]));
+      const [cash1, cash2] = await Promise.all([getUserCash(senderID), getUserCash(targetId)]);
+      if (bet > cash1) return api.sendMessage(UI(["💰 Fonds insuffisants.", `Ton solde: ${await formatNumber(cash1)}$`]), threadID);
+      if (bet > cash2) return api.sendMessage(UI(["💰 L'adversaire n'a pas assez de fonds.", `Son solde: ${await formatNumber(cash2)}$`]), threadID);
 
-      const cash1 = await getUserCash(senderID);
-      const cash2 = await getUserCash(targetId);
+      await Promise.all([updateUserCash(senderID, -bet), updateUserCash(targetId, -bet)]);
 
-      if (bet > cash1) return api.sendMessage(UI(["💰 Fonds insuffisants.", `Solde: ${await formatNumber(cash1)}$`]));
-      if (bet > cash2) return api.sendMessage(UI(["💰 L'adversaire n'a pas assez.", `Son solde: ${await formatNumber(cash2)}$`]));
-
-      await updateUserCash(senderID, -bet);
-      await updateUserCash(targetId, -bet);
-
+      const config = DIFFICULTY_CONFIGS[difficulty];
       const roomId = `duel_${threadID}_${Date.now()}`;
-      const configs = {
-        facile: { rows: 5, cols: 5, timeLimit: 90 },
-        normal: { rows: 7, cols: 7, timeLimit: 120 },
-        difficile: { rows: 9, cols: 9, timeLimit: 150 },
-        extreme: { rows: 12, cols: 12, timeLimit: 200 }
-      };
-      const config = configs[difficulty] || configs.normal;
-      const grid = generateMaze(config.rows, config.cols);
 
       rooms[roomId] = {
-        grid,
+        grid: generateMaze(config.rows, config.cols),
         rows: config.rows,
         cols: config.cols,
         exitPos: { row: config.rows - 1, col: config.cols - 1 },
@@ -955,6 +1022,7 @@ module.exports = {
         currentPlayerIndex: 0,
         turnPhase: "dice",
         diceValue: null,
+        diceBoxes: shuffleDiceBoxes(),
         waitingForMoves: false,
         pendingMoves: [],
         maxPlayers: 2,
@@ -962,61 +1030,52 @@ module.exports = {
         finished: false
       };
 
+      const betStr = await formatNumber(bet);
       await sendMazeImage(api, threadID, roomId, UI([
-        "⚔️ DUEL COMMENCE !",
+        "⚔️ DUEL LANCÉ !",
         "---",
-        `${playerName} vs ${targetName}`,
-        `💰 Mise: ${await formatNumber(bet)}$ chacun`,
+        `${playerName} ⚔️ ${targetName}`,
+        `💰 Mise: ${betStr}$ chacun`,
         `📊 Niveau: ${difficulty}`,
         "---",
-        `${playerName}, choisis une boîte (1-6)`
+        `${playerName}, c'est ton tour ! Choisis une boîte (1-6).`
       ]));
       return;
     }
 
+    // ── Solo start ────────────────────────────────────────────────────────────
     if (sub === "start" || sub === "jouer" || sub === "play") {
       const bet = await parseAmount(args[1]);
       const difficulty = (args[2] || "normal").toLowerCase();
-      const validDifficulties = ["facile", "normal", "difficile", "extreme"];
 
-      if (bet <= 0n) return api.sendMessage(UI(["❌ Mise invalide."]));
-      if (!validDifficulties.includes(difficulty)) return api.sendMessage(UI(["❌ Difficulté invalide."]));
+      if (bet <= 0n) return api.sendMessage(UI(["❌ Mise invalide."]), threadID);
+      if (!DIFFICULTY_CONFIGS[difficulty]) return api.sendMessage(UI(["❌ Difficulté invalide.", "Choix: facile / normal / difficile / extreme"]), threadID);
+      if (getPlayerRoom(senderID)) return api.sendMessage(UI(["Tu es déjà dans une partie."]), threadID);
 
       const cash = await getUserCash(senderID);
-      if (bet > cash) return api.sendMessage(UI(["💰 Fonds insuffisants", `Solde: ${await formatNumber(cash)}$`]));
-
-      const existingRoom = getPlayerRoom(senderID);
-      if (existingRoom) return api.sendMessage(UI(["Tu es deja dans une room."]));
+      if (bet > cash) return api.sendMessage(UI(["💰 Fonds insuffisants.", `Solde: ${await formatNumber(cash)}$`]), threadID);
 
       await updateUserCash(senderID, -bet);
 
       const name = (await usersData.getName(senderID)) || `Player ${senderID}`;
       const roomId = `solo_${threadID}_${Date.now()}`;
-      const configs = {
-        facile: { rows: 5, cols: 5, timeLimit: 60 },
-        normal: { rows: 7, cols: 7, timeLimit: 90 },
-        difficile: { rows: 9, cols: 9, timeLimit: 120 },
-        extreme: { rows: 12, cols: 12, timeLimit: 180 }
-      };
-      const config = configs[difficulty] || configs.normal;
-      const grid = generateMaze(config.rows, config.cols);
+      const config = DIFFICULTY_CONFIGS[difficulty];
 
       rooms[roomId] = {
-        grid,
+        grid: generateMaze(config.rows, config.cols),
         rows: config.rows,
         cols: config.cols,
         exitPos: { row: config.rows - 1, col: config.cols - 1 },
         difficulty,
         timeLimit: config.timeLimit,
-        players: [
-          { id: senderID, name: name, pos: { row: 0, col: 0 }, path: [{ row: 0, col: 0 }], moves: 0, current: true }
-        ],
+        players: [{ id: senderID, name, pos: { row: 0, col: 0 }, path: [{ row: 0, col: 0 }], moves: 0, current: true }],
         bet,
         startTime: Date.now(),
         inProgress: true,
         currentPlayerIndex: 0,
         turnPhase: "dice",
         diceValue: null,
+        diceBoxes: shuffleDiceBoxes(),
         waitingForMoves: false,
         pendingMoves: [],
         maxPlayers: 1,
@@ -1024,11 +1083,12 @@ module.exports = {
         finished: false
       };
 
+      const betStr = await formatNumber(bet);
       await sendMazeImage(api, threadID, roomId, UI([
         "🧩 LABYRINTHE SOLO",
         "---",
         `👤 Joueur: ${name}`,
-        `💰 Mise: ${await formatNumber(bet)}$`,
+        `💰 Mise: ${betStr}$`,
         `📊 Niveau: ${difficulty}`,
         `⏱️ Limite: ${config.timeLimit}s`,
         "---",
@@ -1038,181 +1098,82 @@ module.exports = {
       return;
     }
 
-    const diceMatch = sub.match(/^[1-6]$/);
-    if (diceMatch) {
+    // ── Dice roll (number 1-6) ────────────────────────────────────────────────
+    if (/^[1-6]$/.test(sub)) {
       const roomId = getPlayerRoom(senderID);
-      if (!roomId) return api.sendMessage(UI(["Aucune partie en cours."]));
+      if (!roomId) return api.sendMessage(UI(["Aucune partie en cours."]), threadID);
 
       const room = rooms[roomId];
       const player = getPlayerInRoom(room, senderID);
+      if (!player || !player.current) return api.sendMessage(UI(["Ce n'est pas ton tour."]), threadID);
+      if (room.turnPhase !== "dice") return api.sendMessage(UI(["Tu as déjà lancé le dé. Fais tes déplacements."]), threadID);
 
-      if (!player || !player.current) return api.sendMessage(UI(["Ce n'est pas ton tour."]));
-      if (room.turnPhase !== "dice") return api.sendMessage(UI(["Tu as deja lance le dé. Fais tes déplacements."]));
+      // Check timeout first
+      const elapsed = (Date.now() - room.startTime) / 1000;
+      if (elapsed >= room.timeLimit) { await handleTimeout(api, threadID, roomId); return; }
 
-      const diceValue = parseInt(sub);
+      const boxChoice = parseInt(sub);
+      const diceValue = room.diceBoxes ? room.diceBoxes[boxChoice - 1] : boxChoice;
       room.diceValue = diceValue;
       room.turnPhase = "move";
       room.waitingForMoves = true;
       room.pendingMoves = [];
 
       await sendMazeImage(api, threadID, roomId, UI([
-        `🎲 Tu as lance ${diceValue} (${getDiceEmoji(diceValue)})`,
-        `📦 Boîte choisie: ${sub}`,
+        `🎲 Boîte ${boxChoice} → ${getDiceEmoji(diceValue)} tu as obtenu un ${diceValue} !`,
         "---",
-        `Tu as ${diceValue} déplacements.`,
-        "Envoie: ⬆️ ⬇️ ⬅️ ➡️",
-        `Exemple: ${'⬆️'.repeat(Math.min(diceValue, 3))}`
+        `Tu peux faire ${diceValue} déplacement(s).`,
+        "Envoie les flèches: ⬆️ ⬇️ ⬅️ ➡️"
       ]));
       return;
     }
 
-    const moveMatch = sub.match(/[⬆️⬇️⬅️➡️]/g);
+    // ── Movement arrows ───────────────────────────────────────────────────────
+    // Match all arrow emoji in the message body for better UX
+    const rawBody = event.body || "";
+    const moveMatch = rawBody.match(/⬆️|⬇️|⬅️|➡️/g);
+
     if (moveMatch && moveMatch.length > 0) {
       const roomId = getPlayerRoom(senderID);
-      if (!roomId) return api.sendMessage(UI(["Aucune partie en cours."]));
+      if (!roomId) return api.sendMessage(UI(["Aucune partie en cours."]), threadID);
 
       const room = rooms[roomId];
+      if (room.finished) return;
+
       const player = getPlayerInRoom(room, senderID);
-
-      if (!player || !player.current) return api.sendMessage(UI(["Ce n'est pas ton tour."]));
+      if (!player || !player.current) return api.sendMessage(UI(["Ce n'est pas ton tour."]), threadID);
       if (room.turnPhase !== "move" || !room.waitingForMoves) {
-        return api.sendMessage(UI(["Tu dois d'abord lancer le dé (1-6)."]));
+        return api.sendMessage(UI(["Tu dois d'abord choisir une boîte (1-6)."]), threadID);
       }
 
-      const moves = moveMatch.map(m => getDirectionFromEmoji(m)).filter(Boolean);
+      // Check timeout
+      const elapsed = (Date.now() - room.startTime) / 1000;
+      if (elapsed >= room.timeLimit) { await handleTimeout(api, threadID, roomId); return; }
 
-      if (moves.length === 0) {
-        return api.sendMessage(UI(["Mouvements invalides. Utilise ⬆️ ⬇️ ⬅️ ➡️"]));
-      }
+      const directions = moveMatch.map(m => getDirectionFromEmoji(m)).filter(Boolean);
+      let blocked = false;
 
-      let result = null;
-      let winPlayer = null;
-
-      for (const direction of moves) {
-        if (room.pendingMoves.length >= room.diceValue) break;
+      for (const direction of directions) {
         if (room.finished) break;
+        if (room.pendingMoves.length >= room.diceValue) break;
 
         const moveResult = processRoomMove(room, senderID, direction);
+
         if (!moveResult) {
-          continue;
+          blocked = true;
+          break; // Wall hit — stop further moves this batch
         }
 
         if (moveResult.type === "win") {
-          result = "win";
-          winPlayer = moveResult.player;
-          break;
-        }
-        result = "move";
-      }
-
-      if (result === "win") {
-        room.finished = true;
-        room.inProgress = false;
-
-        const totalBet = room.bet * BigInt(room.players.length);
-        await updateUserCash(winPlayer.id, totalBet);
-
-        ensurePlayerStats(winPlayer.id);
-        playerStats[winPlayer.id].wins++;
-        playerStats[winPlayer.id].played++;
-        updateStreak(winPlayer.id, true);
-
-        for (const p of room.players) {
-          if (p.id !== winPlayer.id) {
-            ensurePlayerStats(p.id);
-            playerStats[p.id].losses++;
-            playerStats[p.id].played++;
-            updateStreak(p.id, false);
-          }
-        }
-        saveStats();
-
-        addHistory({
-          player: winPlayer.id,
-          won: true,
-          moves: winPlayer.moves,
-          difficulty: room.difficulty,
-          players: room.players.length,
-          isRoom: room.players.length > 1
-        });
-
-        await sendMazeImage(api, threadID, roomId, UI([
-          "🎉 VICTOIRE !",
-          "---",
-          `🏆 ${winPlayer.name} a trouve la sortie !`,
-          `🚶 Coups: ${winPlayer.moves}`,
-          `💰 Gain: +${await formatNumber(totalBet)}$`,
-          "---",
-          "🎊 Felicitations !"
-        ]));
-
-        delete rooms[roomId];
-        return;
-      }
-
-      if (room.pendingMoves.length >= room.diceValue) {
-        room.waitingForMoves = false;
-        room.turnPhase = "dice";
-
-        const currentPlayer = getCurrentPlayer(room);
-        if (currentPlayer.pos.row === room.exitPos.row && currentPlayer.pos.col === room.exitPos.col) {
-          room.finished = true;
-          room.inProgress = false;
-
-          const totalBet = room.bet * BigInt(room.players.length);
-          await updateUserCash(currentPlayer.id, totalBet);
-
-          ensurePlayerStats(currentPlayer.id);
-          playerStats[currentPlayer.id].wins++;
-          playerStats[currentPlayer.id].played++;
-          updateStreak(currentPlayer.id, true);
-
-          for (const p of room.players) {
-            if (p.id !== currentPlayer.id) {
-              ensurePlayerStats(p.id);
-              playerStats[p.id].losses++;
-              playerStats[p.id].played++;
-              updateStreak(p.id, false);
-            }
-          }
-          saveStats();
-
-          await sendMazeImage(api, threadID, roomId, UI([
-            "🎉 VICTOIRE !",
-            "---",
-            `🏆 ${currentPlayer.name} a trouve la sortie !`,
-            `🚶 Coups: ${currentPlayer.moves}`,
-            `💰 Gain: +${await formatNumber(totalBet)}$`
-          ]));
-
-          delete rooms[roomId];
+          await handleWin(api, threadID, roomId, moveResult.player);
           return;
         }
+      }
 
-        const elapsed = (Date.now() - room.startTime) / 1000;
-        if (elapsed >= room.timeLimit) {
-          room.finished = true;
-          room.inProgress = false;
-
-          for (const p of room.players) {
-            ensurePlayerStats(p.id);
-            playerStats[p.id].losses++;
-            playerStats[p.id].played++;
-            updateStreak(p.id, false);
-          }
-          saveStats();
-
-          await sendMazeImage(api, threadID, roomId, UI([
-            "⏰ TEMPS ECOULE !",
-            "---",
-            "Personne n'a trouve la sortie a temps."
-          ]));
-
-          delete rooms[roomId];
-          return;
-        }
-
-        const next = nextTurn(room);
+      // All dice moves spent?
+      if (!room.finished && room.pendingMoves.length >= room.diceValue) {
+        nextTurn(room);
+        const next = getCurrentPlayer(room);
         await sendMazeImage(api, threadID, roomId, UI([
           "🔄 TOUR SUIVANT",
           "---",
@@ -1222,24 +1183,129 @@ module.exports = {
         return;
       }
 
-      const remaining = room.diceValue - room.pendingMoves.length;
-      const usedEmojis = room.pendingMoves.map(d => {
-        const map = { "haut": "⬆️", "bas": "⬇️", "gauche": "⬅️", "droite": "➡️" };
-        return map[d] || d;
-      }).join("");
+      if (!room.finished) {
+        const remaining = room.diceValue - room.pendingMoves.length;
+        const usedStr = room.pendingMoves.map(d =>
+          ({ haut: "⬆️", bas: "⬇️", gauche: "⬅️", droite: "➡️" }[d] || d)
+        ).join("");
+
+        await sendMazeImage(api, threadID, roomId, UI([
+          blocked ? "🧱 Mur ! Déplacement bloqué." : `🚶 Déplacements: ${usedStr}`,
+          `⏳ Restant: ${remaining} déplacement(s)`,
+          "---",
+          blocked ? "Fin de tes déplacements (mur rencontré)." : "Continue avec ⬆️ ⬇️ ⬅️ ➡️"
+        ]));
+
+        // If blocked, auto-end turn
+        if (blocked) {
+          nextTurn(room);
+          const next = getCurrentPlayer(room);
+          await sendMazeImage(api, threadID, roomId, UI([
+            "🔄 TOUR SUIVANT",
+            "---",
+            `${next.name}, c'est ton tour !`,
+            "Choisis une boîte (1-6)"
+          ]));
+        }
+      }
+      return;
+    }
+
+    // Unknown command
+    return api.sendMessage(UI([`Commande inconnue. Tape ${p}maze help pour l'aide.`]), threadID);
+  },
+
+  onChat: async function ({ api, event, usersData }) {
+    const threadID = event.threadID;
+    const senderID = event.senderID;
+    const body = (event.body || "").trim();
+
+    // Only react if this player is in an active room
+    const roomId = getPlayerRoom(senderID);
+    if (!roomId) return;
+
+    const room = rooms[roomId];
+    if (!room || room.finished) return;
+
+    const player = getPlayerInRoom(room, senderID);
+    if (!player || !player.current) return; // Not this player's turn
+
+    // ── Dice roll: message is exactly "1" – "6" ───────────────────────────────
+    if (/^[1-6]$/.test(body)) {
+      if (room.turnPhase !== "dice") {
+        return api.sendMessage(UI(["Tu as déjà lancé le dé. Fais tes déplacements ⬆️⬇️⬅️➡️"]), threadID);
+      }
+
+      const elapsed = (Date.now() - room.startTime) / 1000;
+      if (elapsed >= room.timeLimit) { await handleTimeout(api, threadID, roomId); return; }
+
+      const boxChoice = parseInt(body);
+      const diceValue = room.diceBoxes ? room.diceBoxes[boxChoice - 1] : boxChoice;
+      room.diceValue = diceValue;
+      room.turnPhase = "move";
+      room.waitingForMoves = true;
+      room.pendingMoves = [];
 
       await sendMazeImage(api, threadID, roomId, UI([
-        `🚶 Deplacements: ${usedEmojis}`,
-        `⏳ Restant: ${remaining}`,
+        `🎲 Boîte ${boxChoice} → ${getDiceEmoji(diceValue)} tu as obtenu un ${diceValue} !`,
         "---",
-        `Envoie ${'⬆️⬇️⬅️➡️'.slice(0, remaining * 2)}`
+        `Tu peux faire ${diceValue} déplacement(s).`,
+        "Envoie les flèches: ⬆️ ⬇️ ⬅️ ➡️"
       ]));
       return;
     }
 
-    return api.sendMessage(UI([`Commande inconnue. ${p}maze help`]));
-  },
+    // ── Movement arrows ───────────────────────────────────────────────────────
+    const moveMatch = body.match(/⬆️|⬇️|⬅️|➡️/g);
+    if (moveMatch && moveMatch.length > 0) {
+      if (room.turnPhase !== "move" || !room.waitingForMoves) {
+        return api.sendMessage(UI(["Tu dois d'abord choisir une boîte (1-6)."]), threadID);
+      }
 
-  onChat: async function ({ api, event, usersData }) {
+      const elapsed = (Date.now() - room.startTime) / 1000;
+      if (elapsed >= room.timeLimit) { await handleTimeout(api, threadID, roomId); return; }
+
+      const directions = moveMatch.map(m => getDirectionFromEmoji(m)).filter(Boolean);
+      let blocked = false;
+
+      for (const direction of directions) {
+        if (room.finished) break;
+        if (room.pendingMoves.length >= room.diceValue) break;
+
+        const moveResult = processRoomMove(room, senderID, direction);
+        if (!moveResult) { blocked = true; break; }
+        if (moveResult.type === "win") {
+          await handleWin(api, threadID, roomId, moveResult.player);
+          return;
+        }
+      }
+
+      if (room.finished) return;
+
+      // All moves spent or blocked → pass turn
+      if (room.pendingMoves.length >= room.diceValue || blocked) {
+        nextTurn(room);
+        const next = getCurrentPlayer(room);
+        await sendMazeImage(api, threadID, roomId, UI([
+          blocked ? "🧱 Mur ! Tour terminé." : "✅ Déplacements terminés.",
+          "---",
+          `🔄 ${next.name}, c'est ton tour !`,
+          "Choisis une boîte (1-6)"
+        ]));
+        return;
+      }
+
+      // Still moves remaining
+      const remaining = room.diceValue - room.pendingMoves.length;
+      const usedStr = room.pendingMoves.map(d =>
+        ({ haut: "⬆️", bas: "⬇️", gauche: "⬅️", droite: "➡️" }[d] || d)
+      ).join("");
+
+      await sendMazeImage(api, threadID, roomId, UI([
+        `🚶 Déplacements: ${usedStr}`,
+        `⏳ Restant: ${remaining} déplacement(s)`,
+        "Continue avec ⬆️ ⬇️ ⬅️ ➡️"
+      ]));
+    }
   }
 };
