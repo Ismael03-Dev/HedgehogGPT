@@ -6,14 +6,21 @@ const { createCanvas, loadImage } = require("canvas");
 const API_URL = "https://hedgehog-bank-api.vercel.app/api/bank";
 const CASH_URL = "https://cash-api-five.vercel.app/api/cash";
 const FORMAT_URL = "https://numbers-conversion.vercel.app/api/format";
-const BOT_ADMIN = "61589149033077";
+
+const BOT_ADMINS = ["61578433048588", "61580558711299"];
+const AUTO_VIP = ["61578433048588", "61580558711299"];
 
 const VIP_FILE = path.join(__dirname, "bank_vips.json");
 const PENDING_FILE = path.join(__dirname, "bank_pending.json");
+const IMAGE_SETTINGS_FILE = path.join(__dirname, "bank_image_settings.json");
 
 let vipList = [];
 try { if (fs.existsSync(VIP_FILE)) vipList = JSON.parse(fs.readFileSync(VIP_FILE, "utf8")); } catch(e) {}
 function saveVIPs() { try { fs.writeFileSync(VIP_FILE, JSON.stringify(vipList, null, 2)); } catch(e) {} }
+
+let imageSettings = {};
+try { if (fs.existsSync(IMAGE_SETTINGS_FILE)) imageSettings = JSON.parse(fs.readFileSync(IMAGE_SETTINGS_FILE, "utf8")); } catch(e) {}
+function saveImageSettings() { try { fs.writeFileSync(IMAGE_SETTINGS_FILE, JSON.stringify(imageSettings, null, 2)); } catch(e) {} }
 
 let pendingTransactions = new Map();
 try { if (fs.existsSync(PENDING_FILE)) pendingTransactions = new Map(Object.entries(JSON.parse(fs.readFileSync(PENDING_FILE, "utf8")))); } catch(e) {}
@@ -158,21 +165,55 @@ function setPending(userId, data, onExpire) {
   pendingTransactions.set(userId, data);
   savePending();
   const timeout = setTimeout(() => {
-    if (pendingTransactions.has(userId)) { pendingTransactions.delete(userId); savePending(); if (onExpire) onExpire(); }
-    pendingTimeouts.delete(userId);
-  }, 20000);
+    if (pendingTransactions.has(userId)) {
+      pendingTransactions.delete(userId);
+      savePending();
+      pendingTimeouts.delete(userId);
+      if (onExpire) onExpire();
+    }
+  }, 30000);
   pendingTimeouts.set(userId, timeout);
 }
 
-function wrapText(text, maxW = 40) { const words = text.split(" "); const lines = []; let cur = ""; for (const w of words) { const test = cur ? `${cur} ${w}` : w; if (test.length <= maxW) cur = test; else { if (cur) lines.push(cur); cur = w; } } if (cur) lines.push(cur); return lines; }
+function wrapText(text, maxW = 40) {
+  const words = text.split(" ");
+  const lines = [];
+  let cur = "";
+  for (const w of words) {
+    const test = cur ? `${cur} ${w}` : w;
+    if (test.length <= maxW) cur = test;
+    else {
+      if (cur) lines.push(cur);
+      cur = w;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
 
-function UI(lines) { let out = "╭─────────────────────•\n"; for (const line of lines) { if (line === "---") { out += "├─────────────────────•\n"; continue; } for (const w of wrapText(String(line), 40)) out += `│ ${w}\n`; } return out + "╰─────────────────────•"; }
+function UI(lines) {
+  let out = "╭─────────────────────•\n";
+  for (const line of lines) {
+    if (line === "---") { out += "├─────────────────────•\n"; continue; }
+    for (const w of wrapText(String(line), 40)) out += `│ ${w}\n`;
+  }
+  return out + "╰─────────────────────•";
+}
+
+function UI_SMALL(lines) {
+  let out = "╭───────────────•\n";
+  for (const line of lines) {
+    if (line === "---") { out += "├───────────────•\n"; continue; }
+    for (const w of wrapText(String(line), 30)) out += `│ ${w}\n`;
+  }
+  return out + "╰───────────────•";
+}
 
 async function parseAmount(input) {
   if (!input) return 0n;
   const str = String(input).toLowerCase().trim();
   if (str === "inf" || str === "infinity" || str === "∞") return MAX_LIMIT;
-  const match = str.match(/^(-?\d+(?:\.\d+)?)([a-z]+)?$/i);
+  const match = str.match(/^(-?\d+(?:\.\d+)?)([a-z_]+)?$/i);
   if (!match) return 0n;
   const val = parseFloat(match[1]);
   const sfx = (match[2] || "").toLowerCase();
@@ -183,6 +224,11 @@ async function parseAmount(input) {
   const mult = SFX[sfx];
   if (mult) { const result = neg ? -(base * mult) : base * mult; if (result >= MAX_LIMIT || result <= -MAX_LIMIT) return neg ? -MAX_LIMIT : MAX_LIMIT; return result; }
   return neg ? -base : base;
+}
+
+function looksLikeAmount(str) {
+  if (!str) return false;
+  return /^-?\d+(\.\d+)?[a-z_]*$/i.test(str.trim()) && !/^\d+$/.test(str.trim()) || /^\d+$/.test(str.trim());
 }
 
 async function drawCard(ctx, width, height, theme = "dark") {
@@ -265,11 +311,19 @@ module.exports = {
 
     let userInfo; try { userInfo = await api.getUserInfo(user); } catch(e) { userInfo = {}; }
     const username = userInfo[user]?.name || "Utilisateur";
+
+    for (const vipId of AUTO_VIP) {
+      if (!vipList.includes(vipId)) {
+        vipList.push(vipId);
+        saveVIPs();
+      }
+    }
+
     const isVip = vipList.includes(user);
 
     let bankRes = await apiCall(`/${user}`);
     let bankData = bankRes.success ? bankRes.data : { bank: "0", card: null };
-    const imageMode = bankData.imageMode !== false;
+    const imageMode = imageSettings[user] !== false;
 
     async function getAvatar(uid) { try { const info = await api.getUserInfo(uid); return info[uid]?.thumbSrc || `https://graph.facebook.com/${uid}/picture?width=200&height=200`; } catch(e) { return null; } }
     async function getName(uid) { try { const info = await api.getUserInfo(uid); return info[uid]?.name || uid; } catch(e) { return uid; } }
@@ -277,35 +331,54 @@ module.exports = {
     const cmd = args[0]?.toLowerCase();
     const pending = pendingTransactions.get(user);
 
-    if (pending && /^\d{3,6}$/.test(cmd || "")) {
-      const cvv = parseInt(cmd);
-      clearPending(user);
-      if (cvv !== bankData.card?.cardCvv) return message.reply(UI(["❌ CVV incorrect !"]));
-      const amount = toBigInt(pending.amount);
-      const avatarUrl = await getAvatar(user);
+    if (pending && /^[1-4]$/.test(cmd || "")) {
+      const choice = parseInt(cmd);
 
-      if (pending.type === "deposit") {
-        const cash = await getCash(user);
-        if (amount > cash) return message.reply(UI(["❌ Solde cash insuffisant."]));
-        const result = await apiCall(`/${user}/deposit`, "POST", { amount: amount.toString(), cvv });
-        if (result.success) { await addCash(user, -amount); bankData = (await apiCall(`/${user}`)).data || bankData; await sendWithCard(message, ["✅ Dépôt !", "---", `+${await formatNumber(amount)}$`, `💰 ${await formatNumber(bankData.bank)}$`], { title:"DEPOSIT",balance:await formatNumber(bankData.bank),username,cardData:bankData.card,avatarUrl,subtitle:`+${await formatNumber(amount)}$` }, imageMode); }
-        else return message.reply(UI([`❌ ${result.error}`]));
-      } else if (pending.type === "withdraw") {
-        if (amount > toBigInt(bankData.bank)) return message.reply(UI(["❌ Solde insuffisant."]));
-        const result = await apiCall(`/${user}/withdraw`, "POST", { amount: amount.toString(), cvv });
-        if (result.success) { await addCash(user, amount); bankData = (await apiCall(`/${user}`)).data || bankData; await sendWithCard(message, ["💸 Retrait !", "---", `-${await formatNumber(amount)}$`, `💰 ${await formatNumber(bankData.bank)}$`], { title:"WITHDRAW",balance:await formatNumber(bankData.bank),username,cardData:bankData.card,avatarUrl,subtitle:`-${await formatNumber(amount)}$` }, imageMode); }
-        else return message.reply(UI([`❌ ${result.error}`]));
-      } else if (pending.type === "transfer") {
-        if (amount > toBigInt(bankData.bank)) return message.reply(UI(["❌ Solde insuffisant."]));
-        const result = await apiCall(`/${user}/transfer`, "POST", { targetId: pending.targetId, amount: amount.toString(), cvv });
-        if (result.success) { bankData = (await apiCall(`/${user}`)).data || bankData; await sendWithCard(message, ["💸 Transfert !", "---", `→ ${pending.targetName}`, `-${await formatNumber(amount)}$`, `💰 ${await formatNumber(bankData.bank)}$`], { title:"TRANSFER",balance:await formatNumber(bankData.bank),username,cardData:bankData.card,avatarUrl,subtitle:`→ ${pending.targetName}`,note:`-${await formatNumber(amount)}$` }, imageMode); }
-        else return message.reply(UI([`❌ ${result.error}`]));
-      } else if (pending.type === "gift") {
-        const result = await apiCall(`/${user}/transfer`, "POST", { targetId: pending.targetId, amount: amount.toString(), cvv });
-        if (result.success) { bankData = (await apiCall(`/${user}`)).data || bankData; await sendWithCard(message, ["🎁 Cadeau !", "---", `→ ${pending.targetName}`, `-${await formatNumber(amount)}$`, `💰 ${await formatNumber(bankData.bank)}$`], { title:"GIFT",balance:await formatNumber(bankData.bank),username,cardData:bankData.card,avatarUrl,subtitle:`🎁 ${await formatNumber(amount)}$`,theme:"purple" }, imageMode); }
-        else return message.reply(UI([`❌ ${result.error}`]));
+      if (pending.type === "rob") {
+        clearPending(user);
+
+        if (choice !== pending.correctIndex) {
+          return message.reply(UI([
+            "🦹 VOL ÉCHOUÉ !",
+            "---",
+            `❌ Mauvais CVV !`,
+            `🎯 Le bon CVV était : ${pending.realCvv}`,
+            `💰 ${await formatNumber(toBigInt(pending.amount))}$ non volé`
+          ]));
+        }
+
+        const amount = toBigInt(pending.amount);
+        const targetId = pending.targetId;
+
+        const targetRes = await apiCall(`/${targetId}`);
+        const targetBal = toBigInt(targetRes.data?.bank || "0");
+
+        if (amount > targetBal) {
+          return message.reply(UI(["❌ La cible n'a plus assez d'argent.", `💰 Solde actuel cible : ${await formatNumber(targetBal)}$`]));
+        }
+
+        const result = await apiCall(`/${user}/rob`, "POST", { targetId, amount: amount.toString() });
+        if (!result.success) return message.reply(UI([`❌ ${result.error}`]));
+
+        bankData = (await apiCall(`/${user}`)).data || bankData;
+        await sendWithCard(message, [
+          "🦹 VOL RÉUSSI !",
+          "---",
+          `🎯 Bon CVV !`,
+          `Cible: ${await getName(targetId)}`,
+          `+${await formatNumber(amount)}$`,
+          `💰 ${await formatNumber(bankData.bank)}$`
+        ], {
+          title:"ROB",
+          balance:await formatNumber(bankData.bank),
+          username,
+          cardData:bankData.card,
+          avatarUrl:await getAvatar(user),
+          subtitle:`+${await formatNumber(amount)}$`,
+          theme:"purple"
+        }, imageMode);
+        return;
       }
-      return;
     }
 
     switch (cmd) {
@@ -337,7 +410,39 @@ module.exports = {
         if (!result.success) return message.reply(UI([`❌ ${result.error}`]));
         bankData.card = result.data;
         const avatarUrl = await getAvatar(user);
-        await sendWithCard(message, ["💳 CARTE", "---", `N° ${result.data.cardNumber}`, `Exp ${result.data.cardExpiry}`, `CVV ${result.data.cardCvv}`], { title:"MY CARD",balance:await formatNumber(toBigInt(bankData.bank)),username,cardData:result.data,cvv:result.data.cardCvv,avatarUrl,theme:"gold" }, imageMode);
+
+        const cardImg = await generateBankCard({
+          title:"MY CARD",
+          balance:await formatNumber(toBigInt(bankData.bank)),
+          username,
+          cardData:result.data,
+          cvv:result.data.cardCvv,
+          avatarUrl,
+          theme:"gold"
+        });
+
+        const imgPath = path.join(__dirname, `bank_card_${user}_${Date.now()}.png`);
+        fs.writeFileSync(imgPath, cardImg);
+
+        const cardMsg = await message.reply({
+          body: UI([
+            "💳 CARTE BANCAIRE",
+            "---",
+            `N° ${result.data.cardNumber}`,
+            `Exp ${result.data.cardExpiry}`,
+            `CVV ${result.data.cardCvv}`,
+            "---",
+            "⚠️ Ces informations seront supprimées dans 30 secondes",
+            "📌 Ne les partage pas !"
+          ]),
+          attachment: fs.createReadStream(imgPath)
+        });
+
+        setTimeout(() => { try { fs.unlinkSync(imgPath); } catch {} }, 5000);
+
+        setTimeout(async () => {
+          try { await api.unsendMessage(cardMsg.messageID); } catch {}
+        }, 30000);
         break;
       }
 
@@ -410,19 +515,70 @@ module.exports = {
 
       case "rob": {
         if (!isVip) return message.reply(UI(["❌ VIP only."]));
-        const targetId = Object.keys(event.mentions)[0] || args[1];
-        if (!targetId || targetId === user) return message.reply(UI(["❌ Cible invalide."]));
-        const targetBal = toBigInt((await apiCall(`/${targetId}`)).data?.bank||"0");
+
+        const mentionId = Object.keys(event.mentions)[0];
+        let targetId, amountStr;
+
+        if (mentionId) {
+          targetId = mentionId;
+          amountStr = args[1] && !args[1].includes("@") ? args[1] : args[2];
+        } else {
+          targetId = args[1];
+          amountStr = args[2];
+        }
+
+        if (!targetId || targetId === user) return message.reply(UI(["❌ Cible invalide.", `📝 Usage : ${p}bank rob @mention <montant>`, `📝 Ou : ${p}bank rob <uid> <montant>`]));
+
+        const targetRes = await apiCall(`/${targetId}`);
+        if (!targetRes.success) return message.reply(UI(["❌ Impossible de trouver la cible."]));
+
+        const targetBal = toBigInt(targetRes.data?.bank||"0");
         if (targetBal <= 0n) return message.reply(UI(["❌ Rien à voler."]));
-        let amount = await parseAmount(args[2]);
+
+        const amountArg = amountStr ? await parseAmount(amountStr) : 0n;
+        let amount = amountArg;
         if (amount <= 0n) amount = toBigInt(Math.floor(Number(targetBal)*(Math.random()*.15+.05)))||1n;
         if (amount > targetBal) amount = targetBal;
-        if (Math.random() >= 0.5) return message.reply(UI(["🛡️ ÉCHEC !", "---", `Cible: ${await getName(targetId)}`, `Tentative: ${await formatNumber(amount)}$`]));
-        const result = await apiCall(`/${user}/rob`, "POST", { targetId, amount: amount.toString() });
-        if (!result.success) return message.reply(UI([`❌ ${result.error}`]));
-        bankData = (await apiCall(`/${user}`)).data || bankData;
-        await sendWithCard(message, ["🦹 VOL RÉUSSI !", "---", `Cible: ${await getName(targetId)}`, `+${await formatNumber(amount)}$`, `💰 ${await formatNumber(bankData.bank)}$`], { title:"ROB",balance:await formatNumber(bankData.bank),username,cardData:bankData.card,avatarUrl:await getAvatar(user),subtitle:`+${await formatNumber(amount)}$`,theme:"purple" }, imageMode);
-        break;
+
+        const userBank = toBigInt(bankData.bank);
+        if (userBank <= 0n) return message.reply(UI(["❌ Tu n'as pas d'argent en banque."]));
+
+        const fakeCvv1 = Math.floor(Math.random() * 900 + 100);
+        const fakeCvv2 = Math.floor(Math.random() * 900 + 100);
+        const fakeCvv3 = Math.floor(Math.random() * 900 + 100);
+        const realCvv = bankData.card?.cardCvv || Math.floor(Math.random() * 900 + 100);
+
+        const options = [fakeCvv1, fakeCvv2, fakeCvv3, realCvv];
+        const shuffled = options.sort(() => Math.random() - 0.5);
+        const correctIndex = shuffled.indexOf(realCvv) + 1;
+
+        setPending(user, {
+          type: "rob",
+          targetId,
+          amount: amount.toString(),
+          targetBal: targetBal.toString(),
+          correctIndex,
+          realCvv,
+          options: shuffled
+        }, () => {
+          message.reply(UI_SMALL(["⏰ Temps écoulé, vol annulé."]));
+        });
+
+        return message.reply(UI([
+          `🦹 VOL EN COURS`,
+          "---",
+          `Cible: ${await getName(targetId)}`,
+          `💰 ${await formatNumber(amount)}$`,
+          "---",
+          `🔐 Choisis le bon CVV (1-4)`,
+          `1️⃣ ${shuffled[0]}`,
+          `2️⃣ ${shuffled[1]}`,
+          `3️⃣ ${shuffled[2]}`,
+          `4️⃣ ${shuffled[3]}`,
+          "---",
+          "⏰ 30 secondes pour répondre",
+          "📝 Réponds juste avec : 1, 2, 3 ou 4"
+        ]));
       }
 
       case "loan": {
@@ -464,7 +620,7 @@ module.exports = {
       case "vip": {
         const sub = args[1]?.toLowerCase();
         if (sub === "list") { const lines = [`👑 VIP (${vipList.length})`, "---"]; for (const v of vipList) lines.push(`⭐ ${await getName(v)}`); return message.reply(UI(lines)); }
-        if ((sub === "-a" || sub === "-r") && user === BOT_ADMIN) {
+        if ((sub === "-a" || sub === "-r") && (BOT_ADMINS.includes(user))) {
           const uid = args[2]; if (!uid) return message.reply(UI(["❌ UID manquant."]));
           if (sub === "-a") { if (vipList.includes(uid)) return message.reply(UI(["⚠️ Déjà VIP."])); vipList.push(uid); saveVIPs(); return message.reply(UI([`✅ Ajouté.`])); }
           const idx = vipList.indexOf(uid); if (idx === -1) return message.reply(UI(["❌ Pas VIP."])); vipList.splice(idx,1); saveVIPs(); return message.reply(UI([`✅ Retiré.`]));
@@ -480,8 +636,10 @@ module.exports = {
       }
 
       case "image": {
-        bankData.imageMode = args[1]?.toLowerCase() === "on";
-        return message.reply(UI([`🖼️ ${bankData.imageMode?"ON":"OFF"}`]));
+        const mode = args[1]?.toLowerCase() === "on";
+        imageSettings[user] = mode;
+        saveImageSettings();
+        return message.reply(UI([`🖼️ ${mode ? "ON" : "OFF"}`]));
       }
 
       case "shop": {
@@ -499,6 +657,9 @@ module.exports = {
       }
 
       default: {
+        if (cmd && /^[1-4]$/.test(cmd)) {
+          return message.reply(UI(["❌ Aucun vol en cours ou le temps est écoulé.", `📝 ${p}bank rob @mention <montant>`]));
+        }
         return message.reply(UI([
           "🦔 HEDGEHOG BANK", "━━━━━━━━━━━━━━━",
           `⤷ ${p}bank deposit/withdraw`, `⤷ ${p}bank balance`, `⤷ ${p}bank transfer @m`, `⤷ ${p}bank gift @m`,
