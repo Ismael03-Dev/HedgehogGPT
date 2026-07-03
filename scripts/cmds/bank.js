@@ -4,7 +4,7 @@ const axios = require("axios");
 const { createCanvas, loadImage } = require("canvas");
 
 const API_URL    = "https://hedgehog-bank.vercel.app/api/bank";
-const CASH_URL   = "https://cash-api-five.vercel.app/api/cash";
+const CASH_URL   = "https://money-user-two.vercel.app/api/cash";
 const FORMAT_URL = "https://numbers-conversion.vercel.app/api/format";
 
 const BOT_ADMINS = ["61578433048588", "61580558711299"];
