@@ -137,11 +137,32 @@ function evaluateBet(betType, betValue, dice) {
   const sum = dice[0]+dice[1]+dice[2];
   const isTriple = dice[0]===dice[1]&&dice[1]===dice[2];
   const isDouble = !isTriple&&(dice[0]===dice[1]||dice[1]===dice[2]||dice[0]===dice[2]);
-  switch(betType){case"petit":return!isTriple&&sum>=4&&sum<=10;case"grand":return!isTriple&&sum>=11&&sum<=17;case"total":return sum===betValue;case"triple":return isTriple&&(betValue==="any"||dice[0]===betValue);case"double":{if(!isDouble)return false;const c={};dice.forEach(d=>c[d]=(c[d]||0)+1);return betValue==="any"||c[betValue]>=2;}case"simple":return dice.includes(betValue);case"combo":return dice.includes(betValue[0])&&dice.includes(betValue[1])&&betValue[0]!==betValue[1];default:return false;}
+  switch(betType){
+    case"petit":return !isTriple&&sum>=4&&sum<=10;
+    case"grand":return !isTriple&&sum>=11&&sum<=17;
+    case"total":return sum===betValue;
+    case"triple":return isTriple&&(betValue==="any"||dice[0]===betValue);
+    case"double":{
+      if(!isDouble)return false;
+      const c={};dice.forEach(d=>c[d]=(c[d]||0)+1);
+      return betValue==="any"||c[betValue]>=2;
+    }
+    case"simple":return dice.includes(betValue);
+    case"combo":return dice.includes(betValue[0])&&dice.includes(betValue[1])&&betValue[0]!==betValue[1];
+    default:return false;
+  }
 }
 
 const TOTAL_PAYOUTS = {4:60,5:30,6:18,7:12,8:8,9:7,10:6,11:6,12:7,13:8,14:12,15:18,16:30,17:60};
-function getPayout(betType, betValue, dice) { const sum=dice[0]+dice[1]+dice[2]; if(betType==="total")return TOTAL_PAYOUTS[sum]||0; if(betType==="triple")return betValue==="any"?30:180; if(betType==="double")return betValue==="any"?5:10; if(betType==="simple")return 3; if(betType==="combo")return 7; return 2; }
+function getPayout(betType, betValue, dice) {
+  const sum=dice[0]+dice[1]+dice[2];
+  if(betType==="total")return TOTAL_PAYOUTS[sum]||0;
+  if(betType==="triple")return betValue==="any"?30:180;
+  if(betType==="double")return betValue==="any"?5:10;
+  if(betType==="simple")return 3;
+  if(betType==="combo")return 7;
+  return 2;
+}
 
 function UI(lines) { let out="╭─────────────────────•\n"; for(const l of lines){if(l==="---"){out+="├─────────────────────•\n";continue;}out+=`│ ${l}\n`;}return out+"╰─────────────────────•"; }
 
@@ -302,14 +323,18 @@ module.exports = {
     if (betType==="combo"){const n1=parseInt(args[2]),n2=parseInt(args[3]);if(isNaN(n1)||isNaN(n2)||n1<1||n1>6||n2<1||n2>6||n1===n2)return message.reply(UI(["❌ 2 numéros différents 1-6"]));betValue=[n1,n2];}
 
     await updateUserCash(uid, -amount);
-    const dice=rollDice();const sum=dice[0]+dice[1]+dice[2];const isTriple=dice[0]===dice[1]&&dice[1]===dice[2];
-    const realWin=evaluateBet(betType,betValue,dice);
-    let win=realWin;
-    if(!realWin){const thresh=betType==="triple"?0.49:betType==="total"?0.48:betType==="combo"?0.42:0.45;if(Math.random()<thresh)win=true;}
-    const payout=win?getPayout(betType,betValue,dice):0;
-    const winAmount=win?amount*BigInt(payout):0n;
-    if(win)await updateUserCash(uid,winAmount);
-    const newBalance=await getUserCash(uid);
+    const dice=rollDice();
+    const sum=dice[0]+dice[1]+dice[2];
+    const isTriple=dice[0]===dice[1]&&dice[1]===dice[2];
+    
+    // 🔥 VRAI HASARD - Pas de triche, pas de pity win
+    const win = evaluateBet(betType, betValue, dice);
+    
+    const payout = win ? getPayout(betType, betValue, dice) : 0;
+    const winAmount = win ? amount * BigInt(payout) : 0n;
+    
+    if (win) await updateUserCash(uid, winAmount);
+    const newBalance = await getUserCash(uid);
 
     incrementTurn(uid);
     const remainingTurns = getRemainingTurns(uid);
