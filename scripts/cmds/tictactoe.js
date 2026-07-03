@@ -4,7 +4,7 @@ const { createCanvas } = require("canvas");
 const axios  = require("axios");
 
 const FORMAT_URL  = "https://numbers-conversion.vercel.app/api/format";
-const CASH_URL    = "https://cash-api-five.vercel.app/api/cash";
+const CASH_URL    = "https://money-user-two.vercel.app/api/cash";
 const MISTRAL_API = "https://api.mistral.ai/v1/chat/completions";
 const MISTRAL_KEY = "VCFZLWLWcxk6SIMIZHa0HjGr2rRwrZhN";
 
