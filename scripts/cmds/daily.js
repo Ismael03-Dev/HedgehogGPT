@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { createCanvas, loadImage } = require("canvas");
 
-const CASH_URL = "https://cash-api-five.vercel.app/api/cash";
+const CASH_URL = "https://money-user-two.vercel.app/api/cash";
 const FORMAT_URL = "https://numbers-conversion.vercel.app/api/format";
 const MAX_LIMIT = 10n ** 261n;
 const TIMEZONE = "Africa/Douala";
