@@ -3,7 +3,7 @@ const { createCanvas, loadImage } = require("canvas");
 const path = require("path");
 const axios = require("axios");
 
-const CASH_API_URL = "https://cash-api-five.vercel.app/api/cash";
+const CASH_API_URL = "https://money-user-two.vercel.app/api/cash";
 const CONVERT_API_URL = "https://numbers-conversion.vercel.app/api/format";
 
 const MAX_LIMIT = 10n ** 261n;
