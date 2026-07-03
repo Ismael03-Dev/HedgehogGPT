@@ -122,7 +122,20 @@ const SYMBOL_CONFIG = {
 };
 
 function spinReels() { return REELS.map(r => r[Math.floor(Math.random() * r.length)]); }
-function calcWin(s1, s2, s3, bet) { const b = toBigInt(bet); if (s1 === s2 && s2 === s3) { const cfg = SYMBOL_CONFIG[s1]; return { win: true, winAmount: b * cfg.tripleX, multiplier: Number(cfg.tripleX), rank: `TRIPLE ${s1}!` }; } if (s1 === s2 || s2 === s3 || s1 === s3) { const sym = s1 === s2 ? s1 : s2 === s3 ? s2 : s1; const cfg = SYMBOL_CONFIG[sym]; return { win: true, winAmount: b * cfg.pairX, multiplier: Number(cfg.pairX), rank: `PAIR ${sym}` }; } return { win: false, winAmount: -b, multiplier: 0, rank: "NO WIN" }; }
+
+function calcWin(s1, s2, s3, bet) {
+  const b = toBigInt(bet);
+  if (s1 === s2 && s2 === s3) {
+    const cfg = SYMBOL_CONFIG[s1];
+    return { win: true, winAmount: b * cfg.tripleX, multiplier: Number(cfg.tripleX), rank: `TRIPLE ${s1}!` };
+  }
+  if (s1 === s2 || s2 === s3 || s1 === s3) {
+    const sym = s1 === s2 ? s1 : s2 === s3 ? s2 : s1;
+    const cfg = SYMBOL_CONFIG[sym];
+    return { win: true, winAmount: b * cfg.pairX, multiplier: Number(cfg.pairX), rank: `PAIR ${sym}` };
+  }
+  return { win: false, winAmount: -b, multiplier: 0, rank: "NO WIN" };
+}
 
 function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath(); }
 
