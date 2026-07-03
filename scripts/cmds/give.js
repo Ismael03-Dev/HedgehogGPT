@@ -4,7 +4,7 @@ const axios = require("axios");
 const path = require("path");
 
 const CONVERT_API_URL = "https://numbers-conversion.vercel.app/api/format";
-const CASH_API_URL = "https://cash-api-five.vercel.app/api/cash";
+const CASH_API_URL = "https://money-user-two.vercel.app/api/cash";
 
 const TIERS = [
   { v: 10n**258n, s: "Qiu" }, { v: 10n**255n, s: "Qu"  }, { v: 10n**252n, s: "Tu"  },
