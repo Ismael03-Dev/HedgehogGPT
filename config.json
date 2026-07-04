@@ -17,20 +17,18 @@
     "ignoreCommand": []
   },
   "adminBot": [
-    "100083846212138",
     "61580558711299",
     "61578433048588"
   ],
   "whiteListMode": {
     "enable": false,
     "whiteListIds": [
-    "100083846212138",
     "61580558711299",
     "61578433048588"
 ],
     "notes": "if you enable this feature, only the ids in the whiteListIds section can use the bot"
   },
-  "nickNameBot": "➤『 𝙷𝙴𝙳𝙶𝙴𝙷𝙾𝙶𝄞𝙶𝙿𝚃 』☜ヅ",
+  "nickNameBot": "✿ ʙᴏᴛ 𝐓𝐀𝐑𝐆𝐀𝐑𝐘𝐄𝐍",
   "prefix": [
          "~"
   ],
