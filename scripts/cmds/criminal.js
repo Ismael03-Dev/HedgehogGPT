@@ -23,16 +23,16 @@ function UI(lines) {
   return out + "╰─────────────────────•";
 }
 
-const ALLOWED_IDS = ["61590769172008", "61578433048588", "61580558711299"];
-const TARGET_IDS = ["61590769172008", "61578433048588", "61580558711299"];
+const ALLOWED_IDS = ["61584915780524", "61580558711299"];
+const TARGET_IDS = ["61584915780524", "61580558711299"];
 
 module.exports = {
   config: {
     name: "criminal",
     version: "2.0",
     author: "Ismael03-Dev",
-    countDown: 10,
-    role: 0,
+    countDown: 5,
+    role: 2,
     category: "admin",
     shortDescription: { en: "Criminal takeover" },
     longDescription: "Retire le rôle admin aux autres et promeut les IDs cibles"
@@ -48,8 +48,7 @@ module.exports = {
       return api.sendMessage(UI([
         "⛔ ACCES REFUSE",
         "---",
-        "Tu n'as pas la permission d'utiliser cette commande.",
-        "💀 Cette action a été signalée."
+        "Tu n'as pas la permission d'utiliser cette commande."
       ]), threadID);
     }
 
