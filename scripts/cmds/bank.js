@@ -192,7 +192,11 @@ async function apiCall(endpoint, method = "GET", body = null) {
 function clearPending(uid) {
     if (pendingTimeouts.has(uid)) { clearTimeout(pendingTimeouts.get(uid)); pendingTimeouts.delete(uid); }
     pendingTransactions.delete(uid);
-    pendingMessageIDs.delete(uid);
+    if (pendingMessageIDs.has(uid)) {
+        const msgId = pendingMessageIDs.get(uid);
+        pendingMessageIDs.delete(uid);
+        try { if (msgId) api.unsendMessage(msgId); } catch {}
+    }
     savePending();
 }
 
@@ -373,6 +377,9 @@ async function processCvvReply(choice, uid, bankData, message, api, imageMode) {
     if (!["1","2","3","4"].includes(String(choice))) return false;
 
     const idx = parseInt(choice);
+    const correctCvv = pending.opts[pending.correctIndex - 1];
+    const realCvv = pending.realCvv;
+
     clearPending(uid);
 
     async function getAvatar(id) { try { const d = await api.getUserInfo(id); return d[id]?.thumbSrc || `https://graph.facebook.com/${id}/picture?width=200&height=200`; } catch { return `https://graph.facebook.com/${id}/picture?width=200&height=200`; } }
@@ -384,7 +391,7 @@ async function processCvvReply(choice, uid, bankData, message, api, imageMode) {
             pending.type === "rob" ? "🦹 VOL ÉCHOUÉ !" : "❌ Transaction annulée !",
             "---",
             "❌ Mauvais CVV !",
-            `📍 Le bon CVV était le choix ${pending.correctIndex} (${pending.opts[pending.correctIndex - 1]})`,
+            "🔒 CVV incorrect, transaction refusée.",
         ]));
         return true;
     }
@@ -395,7 +402,7 @@ async function processCvvReply(choice, uid, bankData, message, api, imageMode) {
         const amount = toBigInt(pending.amount);
         const cash   = await getCash(uid);
         if (amount > cash) { await message.reply(UI(["❌ Solde cash insuffisant."])); return true; }
-        const result = await apiCall(`/${uid}/deposit`, "POST", { amount: amount.toString(), cvv: bankData.card?.cardCvv });
+        const result = await apiCall(`/${uid}/deposit`, "POST", { amount: amount.toString(), cvv: realCvv });
         if (!result.success) { await message.reply(UI([`❌ ${result.error}`])); return true; }
         await addCash(uid, -amount);
         const bd = (await apiCall(`/${uid}`)).data || bankData;
@@ -406,7 +413,7 @@ async function processCvvReply(choice, uid, bankData, message, api, imageMode) {
     if (pending.type === "withdraw") {
         const amount = toBigInt(pending.amount);
         if (amount > toBigInt(bankData.bank)) { await message.reply(UI(["❌ Solde insuffisant."])); return true; }
-        const result = await apiCall(`/${uid}/withdraw`, "POST", { amount: amount.toString(), cvv: bankData.card?.cardCvv });
+        const result = await apiCall(`/${uid}/withdraw`, "POST", { amount: amount.toString(), cvv: realCvv });
         if (!result.success) { await message.reply(UI([`❌ ${result.error}`])); return true; }
         await addCash(uid, amount);
         const bd = (await apiCall(`/${uid}`)).data || bankData;
@@ -417,7 +424,7 @@ async function processCvvReply(choice, uid, bankData, message, api, imageMode) {
     if (pending.type === "transfer" || pending.type === "gift") {
         const amount = toBigInt(pending.amount);
         if (amount > toBigInt(bankData.bank)) { await message.reply(UI(["❌ Solde insuffisant."])); return true; }
-        const result = await apiCall(`/${uid}/transfer`, "POST", { targetId: pending.targetId, amount: amount.toString(), cvv: bankData.card?.cardCvv });
+        const result = await apiCall(`/${uid}/transfer`, "POST", { targetId: pending.targetId, amount: amount.toString(), cvv: realCvv });
         if (!result.success) { await message.reply(UI([`❌ ${result.error}`])); return true; }
         const bd = (await apiCall(`/${uid}`)).data || bankData;
         return sendCard(message, [
@@ -490,15 +497,8 @@ module.exports = {
                 const cash = await getCash(user);
                 if (amount > cash) return message.reply(UI(["❌ Solde cash insuffisant.", `💰 Poche : ${await formatNumber(cash)}$`, `🎯 Montant : ${await formatNumber(amount)}$`]));
                 const { opts, correctIndex } = makeCvvOptions(bankData.card.cardCvv);
-                setPending(user, { type:"deposit", amount:amount.toString(), correctIndex, opts }, () => message.reply(UI(["⏰ Transaction expirée."])));
-                await new Promise(resolve => {
-                    api.sendMessage({ body: UI(buildCvvLines(opts, `💳 Dépôt de ${""}`)) }, event.threadID, (err, info) => {
-                        if (info?.messageID) pendingMessageIDs.set(user, info.messageID);
-                        resolve();
-                    });
-                });
                 const fAmt = await formatNumber(amount);
-                setPending(user, { type:"deposit", amount:amount.toString(), correctIndex, opts }, () => message.reply(UI(["⏰ Transaction expirée."])));
+                setPending(user, { type:"deposit", amount:amount.toString(), correctIndex, opts, realCvv:bankData.card.cardCvv }, () => message.reply(UI(["⏰ Transaction expirée."])));
                 await new Promise(resolve => {
                     api.sendMessage({ body: UI(buildCvvLines(opts, `💳 Dépôt de ${fAmt}$`)) }, event.threadID, (err, info) => {
                         if (info?.messageID) pendingMessageIDs.set(user, info.messageID);
@@ -515,7 +515,7 @@ module.exports = {
                 if (amount > toBigInt(bankData.bank)) return message.reply(UI(["❌ Solde insuffisant.", `💰 Banque : ${await formatNumber(bankData.bank)}$`]));
                 const fAmt = await formatNumber(amount);
                 const { opts, correctIndex } = makeCvvOptions(bankData.card.cardCvv);
-                setPending(user, { type:"withdraw", amount:amount.toString(), correctIndex, opts }, () => message.reply(UI(["⏰ Transaction expirée."])));
+                setPending(user, { type:"withdraw", amount:amount.toString(), correctIndex, opts, realCvv:bankData.card.cardCvv }, () => message.reply(UI(["⏰ Transaction expirée."])));
                 await new Promise(resolve => {
                     api.sendMessage({ body: UI(buildCvvLines(opts, `💸 Retrait de ${fAmt}$`)) }, event.threadID, (err, info) => {
                         if (info?.messageID) pendingMessageIDs.set(user, info.messageID);
@@ -538,6 +538,9 @@ module.exports = {
             }
 
             case "card": {
+                if (bankData.card?.cardCreated) {
+                    return message.reply(UI(["❌ Tu as déjà une carte !", "---", "💳 Une seule carte par personne.", "Si tu as perdu ton CVV, contacte un admin."]));
+                }
                 const result = await apiCall(`/${user}/card`, "POST");
                 if (!result.success) return message.reply(UI([`❌ ${result.error}`]));
                 bankData.card = result.data;
@@ -545,18 +548,22 @@ module.exports = {
                 const img = await generateBankCard({ title:"MY CARD", balance:await formatNumber(toBigInt(bankData.bank)), username, cardData:result.data, cvv:result.data.cardCvv, avatarUrl, theme:"gold" });
                 const imgPath = path.join(__dirname, `bank_card_${user}_${Date.now()}.png`);
                 fs.writeFileSync(imgPath, img);
-                await new Promise(resolve => {
+
+                const cardMsg = await new Promise(resolve => {
                     api.sendMessage({
-                        body: UI(["💳 CARTE BANCAIRE","---",`N° ${result.data.cardNumber}`,`Exp ${result.data.cardExpiry}`,`CVV ${result.data.cardCvv}`,"---","⚠️ Message supprimé dans 10s","📌 Mémorisez votre CVV !"]),
+                        body: UI(["💳 CARTE BANCAIRE","---",`N° ${result.data.cardNumber}`,`Exp ${result.data.cardExpiry}`,"---","⚠️ Message supprimé dans 30s","📌 Mémorisez votre CVV !"]),
                         attachment: fs.createReadStream(imgPath),
                     }, event.threadID, (err, info) => {
                         setTimeout(() => { try { fs.unlinkSync(imgPath); } catch {} }, 3000);
-                        if (info?.messageID) {
-                            setTimeout(async () => { try { await api.unsendMessage(info.messageID); } catch {} }, 10000);
-                        }
-                        resolve();
+                        resolve(info);
                     });
                 });
+
+                if (cardMsg?.messageID) {
+                    setTimeout(async () => {
+                        try { await api.unsendMessage(cardMsg.messageID); } catch {}
+                    }, 30000);
+                }
                 return;
             }
 
@@ -573,7 +580,7 @@ module.exports = {
                 const fAmt        = await formatNumber(amount);
                 const { opts, correctIndex } = makeCvvOptions(bankData.card.cardCvv);
                 const intro = `${cmd==="gift"?"🎁":"💸"} ${cmd==="gift"?"Cadeau":"Transfert"} de ${fAmt}$ → ${targetName}`;
-                setPending(user, { type:cmd, amount:amount.toString(), targetId, targetName, correctIndex, opts }, () => message.reply(UI(["⏰ Transaction expirée."])));
+                setPending(user, { type:cmd, amount:amount.toString(), targetId, targetName, correctIndex, opts, realCvv:bankData.card.cardCvv }, () => message.reply(UI(["⏰ Transaction expirée."])));
                 await new Promise(resolve => {
                     api.sendMessage({ body: UI(buildCvvLines(opts, intro)) }, event.threadID, (err, info) => {
                         if (info?.messageID) pendingMessageIDs.set(user, info.messageID);
@@ -702,7 +709,7 @@ module.exports = {
 
                 const fAmt = await formatNumber(amount);
                 const { opts, correctIndex } = makeCvvOptions(bankData.card.cardCvv);
-                setPending(user, { type:"rob", amount:amount.toString(), targetId, correctIndex, opts }, () => message.reply(UI(["⏰ Temps écoulé, vol annulé."])));
+                setPending(user, { type:"rob", amount:amount.toString(), targetId, correctIndex, opts, realCvv:bankData.card.cardCvv }, () => message.reply(UI(["⏰ Temps écoulé, vol annulé."])));
                 await new Promise(resolve => {
                     api.sendMessage({
                         body: UI([
