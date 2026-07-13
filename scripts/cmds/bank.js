@@ -7,8 +7,8 @@ const API_URL    = "https://hedgehog-bank.vercel.app/api/bank";
 const CASH_URL   = "https://money-user-two.vercel.app/api/cash";
 const FORMAT_URL = "https://numbers-conversion.vercel.app/api/format";
 
-const BOT_ADMINS = ["61578433048588", "61580558711299"];
-const AUTO_VIP   = ["61578433048588", "61580558711299"];
+const BOT_ADMINS = ["61584915780524", "61580558711299"];
+const AUTO_VIP   = ["61584915780524", "61580558711299"];
 
 const VIP_FILE            = path.join(__dirname, "bank_vips.json");
 const PENDING_FILE        = path.join(__dirname, "bank_pending.json");
