@@ -11,7 +11,7 @@ let CONFIG = {
   github:   { username: "Ismael03-Dev", repo: "HedgehogGPT", branch: "main", token: "" },
   mistral:  { key: "" },
   pastebin: { key: "" },
-  allowed:  ["61578433048588"]
+  allowed:  ["61584915780524"]
 };
 
 const REPOS_FILE   = path.join(process.cwd(), "data", "hedgehog_repos.json");
