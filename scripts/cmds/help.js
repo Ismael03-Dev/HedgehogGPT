@@ -29,7 +29,7 @@ const ROLE_NAMES = {
 const PRIORITY_CATEGORIES = ["info", "system", "admin", "owner"];
 
 function getCategoryIcon(cat) {
- return CATEGORY_ICONS[cat.toLowerCase()] || "📦";
+ return CATEGORY_ICONS[cat?.toLowerCase()] || "📦";
 }
 
 function getRoleInfo(role) {
@@ -43,8 +43,10 @@ function formatGuide(guide, prefix, name) {
  .replace(/{n}/g, name);
 }
 
-function buildHeader(prefix, total, categories) {
+function buildHeader(prefix, total, categories, threadID) {
  const catCount = Object.keys(categories).length;
+ const now = new Date();
+ const timeStr = now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
  return (
  `╭─────────────────────•\n` +
  `│ 🦔 HEDGEHOG BOT — AIDE\n` +
@@ -52,19 +54,29 @@ function buildHeader(prefix, total, categories) {
  `│ 🔹 Prefix : ${prefix}\n` +
  `│ 🔸 Commandes : ${total}\n` +
  `│ 📂 Catégories: ${catCount}\n` +
+ `│ 🕐 ${timeStr}\n` +
  `╰─────────────────────•\n`
  );
 }
 
-function buildCategoryBlock(cat, cmdList, prefix) {
+function buildCategoryBlock(cat, cmdList, prefix, role) {
  const icon = getCategoryIcon(cat);
  const title = cat.toUpperCase();
- let block = `\n╭──【 ${icon} ${title} 】\n`;
+ const total = cmdList.length;
+ let block = `\n╭──【 ${icon} ${title} — ${total} cmd(s) 】\n`;
 
  const perLine = 2;
  for (let i = 0; i < cmdList.length; i += perLine) {
  const chunk = cmdList.slice(i, i + perLine);
- block += `│ ${chunk.map(c => `⤷ ${c}`).join(" ")}\n`;
+ const formatted = chunk.map(c => {
+ const cmd = commands.get(c);
+ const desc = cmd?.config?.shortDescription?.en || "";
+ const roleInfo = getRoleInfo(cmd?.config?.role || 0);
+ const isRestricted = (cmd?.config?.role || 0) > 0;
+ const icon2 = isRestricted ? "🔒" : "○";
+ return `${icon2} ${c}`;
+ });
+ block += `│ ${formatted.join("   ")}\n`;
  }
 
  block += `╰${"─".repeat(20)}\n`;
@@ -86,6 +98,9 @@ function buildCommandDetail(cmd, prefix) {
  if (typeof cmd.onChat === "function") events.push("onChat");
  if (typeof cmd.onReply === "function") events.push("onReply");
 
+ const isRestricted = cfg.role > 0;
+ const lockIcon = isRestricted ? "🔒" : "🔓";
+
  return (
  `╭─────────────────────•\n` +
  `│ 📖 ${cfg.name.toUpperCase()} v${version}\n` +
@@ -93,7 +108,7 @@ function buildCommandDetail(cmd, prefix) {
  `│ 📝 ${desc}\n` +
  `├─────────────────────•\n` +
  `│ 👤 Auteur : ${author}\n` +
- `│ ${roleInfo.icon} Rôle : ${roleInfo.label} (${cfg.role || 0})\n` +
+ `│ ${roleInfo.icon} Rôle : ${roleInfo.label} ${lockIcon}\n` +
  `│ ⏱️ Cooldown : ${cooldown}s\n` +
  `│ 🏷️ Alias : ${aliasText}\n` +
  `│ 📂 Catégorie : ${getCategoryIcon(cfg.category || "uncategorized")} ${cfg.category || "Uncategorized"}\n` +
@@ -101,6 +116,8 @@ function buildCommandDetail(cmd, prefix) {
  `├─────────────────────•\n` +
  `│ 🔧 Usage :\n` +
  `│ ${guide}\n` +
+ `├─────────────────────•\n` +
+ `│ 💡 ${prefix}help → liste complète\n` +
  `╰─────────────────────•`
  );
 }
@@ -109,20 +126,70 @@ function buildFooter(prefix) {
  return (
  `\n╭─────────────────────•\n` +
  `│ 💡 ${prefix}help <commande>\n` +
- `│ pour plus de détails\n` +
+ `│ 💡 ${prefix}help catégorie\n` +
+ `│ 💡 ${prefix}help search <mot>\n` +
+ `│ 💡 ${prefix}help aliases\n` +
  `╰─────────────────────•`
  );
 }
 
-function buildSearchResults(results, prefix) {
- if (!results.length)
- return null;
+function buildSearchResults(results, prefix, keyword) {
+ if (!results.length) return null;
 
- let msg = `╭─────────────────────•\n│ 🔍 RÉSULTATS\n├─────────────────────•\n`;
+ let msg = `╭─────────────────────•\n│ 🔍 RÉSULTATS POUR "${keyword}"\n├─────────────────────•\n`;
  for (const name of results) {
  const cmd = commands.get(name);
  const icon = getCategoryIcon(cmd?.config?.category || "");
- msg += `│ ${icon} ${name}\n`;
+ const desc = cmd?.config?.shortDescription?.en || "";
+ const roleIcon = (cmd?.config?.role || 0) > 0 ? "🔒" : "○";
+ msg += `│ ${icon} ${roleIcon} ${name}${desc ? ` — ${desc}` : ""}\n`;
+ }
+ msg += `╰─────────────────────•`;
+ return msg;
+}
+
+function buildAliasList(prefix) {
+ const aliasMap = {};
+ for (const [name, cmd] of commands) {
+ const aliases2 = cmd.config?.aliases || [];
+ if (aliases2.length) {
+ aliasMap[name] = aliases2;
+ }
+ }
+
+ if (!Object.keys(aliasMap).length) {
+ return `╭─────────────────────•\n│ 🏷️ Aucun alias trouvé\n╰─────────────────────•`;
+ }
+
+ let msg = `╭─────────────────────•\n│ 🏷️ LISTE DES ALIAS\n├─────────────────────•\n`;
+ for (const [name, aliases2] of Object.entries(aliasMap)) {
+ msg += `│ ${name} → ${aliases2.join(", ")}\n`;
+ }
+ msg += `╰─────────────────────•`;
+ return msg;
+}
+
+function buildStats() {
+ const total = commands.size;
+ const categories = {};
+ let restricted = 0;
+
+ for (const [_, cmd] of commands) {
+ const cat = (cmd.config?.category || "uncategorized").toLowerCase();
+ if (!categories[cat]) categories[cat] = 0;
+ categories[cat]++;
+ if ((cmd.config?.role || 0) > 0) restricted++;
+ }
+
+ const sortedCats = Object.keys(categories).sort();
+ let msg = `╭─────────────────────•\n│ 📊 STATISTIQUES DES COMMANDES\n├─────────────────────•\n`;
+ msg += `│ 📦 Total : ${total}\n`;
+ msg += `│ 🔒 Restreintes : ${restricted}\n`;
+ msg += `│ 🔓 Publiques : ${total - restricted}\n`;
+ msg += `├─────────────────────•\n`;
+ for (const cat of sortedCats) {
+ const icon = getCategoryIcon(cat);
+ msg += `│ ${icon} ${cat} : ${categories[cat]}\n`;
  }
  msg += `╰─────────────────────•`;
  return msg;
@@ -131,14 +198,14 @@ function buildSearchResults(results, prefix) {
 module.exports = {
  config: {
  name: "help",
- version: "2.0",
+ version: "3.0",
  author: "Ismael03-Dev",
  countDown: 5,
  role: 0,
  shortDescription: { en: "Liste des commandes et aide" },
  longDescription: { en: "Affiche toutes les commandes ou les détails d'une commande spécifique." },
  category: "info",
- guide: { en: "{pn} [commande | catégorie | search <mot>]" },
+ guide: { en: "{pn} [commande | catégorie | search <mot> | aliases | stats]" },
  priority: 0
  },
 
@@ -169,62 +236,93 @@ module.exports = {
  return a.localeCompare(b);
  });
 
- let msg = buildHeader(prefix, visibleCount, categories);
+ let msg = buildHeader(prefix, visibleCount, categories, threadID);
 
  for (const cat of sortedCategories) {
- msg += buildCategoryBlock(cat, categories[cat], prefix);
+ msg += buildCategoryBlock(cat, categories[cat], prefix, role);
  }
 
  msg += buildFooter(prefix);
  return message.reply(msg);
  }
 
- if (args[0].toLowerCase() === "search" || args[0].toLowerCase() === "s") {
+ const input = args[0].toLowerCase();
+
+ if (input === "search" || input === "s") {
  const keyword = args.slice(1).join(" ").toLowerCase();
- if (!keyword)
- return message.reply(`╭─────────────────────•\n│ ⚠️ Fournis un mot-clé\n│ Usage : ${prefix}help search <mot>\n╰─────────────────────•`);
+ if (!keyword) {
+ return message.reply(
+ `╭─────────────────────•\n│ ⚠️ Fournis un mot-clé\n│ Usage : ${prefix}help search <mot>\n╰─────────────────────•`
+ );
+ }
 
  const results = [];
  for (const [name, cmd] of commands) {
  const cfg = cmd.config;
+ if ((cfg.role || 0) > (role || 0)) continue;
  const inName = name.includes(keyword);
  const inDesc = (cfg.shortDescription?.en || "").toLowerCase().includes(keyword);
+ const inLongDesc = (cfg.longDescription?.en || "").toLowerCase().includes(keyword);
  const inCat = (cfg.category || "").toLowerCase().includes(keyword);
  const inAlias = (cfg.aliases || []).some(a => a.includes(keyword));
- if (inName || inDesc || inCat || inAlias) results.push(name);
+ const inAuthor = (cfg.author || "").toLowerCase().includes(keyword);
+ if (inName || inDesc || inLongDesc || inCat || inAlias || inAuthor) results.push(name);
  }
 
- const resultMsg = buildSearchResults(results, prefix);
- if (!resultMsg)
- return message.reply(`╭─────────────────────•\n│ ❌ Aucun résultat pour "${keyword}"\n╰─────────────────────•`);
+ const resultMsg = buildSearchResults(results, prefix, keyword);
+ if (!resultMsg) {
+ return message.reply(
+ `╭─────────────────────•\n│ ❌ Aucun résultat pour "${keyword}"\n│ 💡 ${prefix}help pour la liste complète\n╰─────────────────────•`
+ );
+ }
 
  return message.reply(resultMsg);
  }
 
- const catInput = args[0].toLowerCase();
+ if (input === "aliases" || input === "alias") {
+ return message.reply(buildAliasList(prefix));
+ }
+
+ if (input === "stats" || input === "statistiques") {
+ return message.reply(buildStats());
+ }
+
  const catCommands = [];
  for (const [name, cmd] of commands) {
- if ((cmd.config.category || "").toLowerCase() === catInput)
+ if ((cmd.config.category || "").toLowerCase() === input) {
+ if ((cmd.config.role || 0) > (role || 0)) continue;
  catCommands.push(name);
+ }
  }
 
  if (catCommands.length > 0) {
  catCommands.sort();
- const icon = getCategoryIcon(catInput);
- let msg = `╭─────────────────────•\n│ ${icon} CATÉGORIE : ${catInput.toUpperCase()}\n│ ${catCommands.length} commande(s)\n├─────────────────────•\n`;
+ const icon = getCategoryIcon(input);
+ let msg = `╭─────────────────────•\n│ ${icon} CATÉGORIE : ${input.toUpperCase()}\n│ ${catCommands.length} commande(s)\n├─────────────────────•\n`;
  for (const name of catCommands) {
  const cmd = commands.get(name);
  const desc = cmd?.config?.shortDescription?.en || "";
- msg += `│ ⤷ ${name}${desc ? ` — ${desc}` : ""}\n`;
+ const roleIcon = (cmd?.config?.role || 0) > 0 ? "🔒" : "○";
+ msg += `│ ${roleIcon} ⤷ ${name}${desc ? ` — ${desc}` : ""}\n`;
  }
- msg += `╰─────────────────────•`;
+ msg += `\n│ 💡 ${prefix}help ${input} pour plus de détails\n╰─────────────────────•`;
  return message.reply(msg);
  }
 
- const input = args[0].toLowerCase();
  const cmd = commands.get(input) || commands.get(aliases.get(input));
 
- if (!cmd)
+ if (!cmd) {
+ const suggestions = [];
+ for (const [name, _] of commands) {
+ if (name.includes(input) || (cmd?.config?.aliases || []).some(a => a.includes(input))) {
+ suggestions.push(name);
+ }
+ }
+ if (suggestions.length > 0) {
+ return message.reply(
+ `╭─────────────────────•\n│ ❌ "${input}" introuvable\n├─────────────────────•\n│ 💡 Suggestions :\n│ ${suggestions.slice(0, 5).join(", ")}${suggestions.length > 5 ? `... (+${suggestions.length - 5})` : ""}\n├─────────────────────•\n│ 💡 ${prefix}help search ${input}\n│ 💡 ${prefix}help → liste complète\n╰─────────────────────•`
+ );
+ }
  return message.reply(
  `╭─────────────────────•\n` +
  `│ ❌ "${input}" introuvable\n` +
@@ -233,6 +331,13 @@ module.exports = {
  `│ 💡 ${prefix}help search <mot>\n` +
  `╰─────────────────────•`
  );
+ }
+
+ if ((cmd.config.role || 0) > (role || 0)) {
+ return message.reply(
+ `╭─────────────────────•\n│ 🔒 Commande restreinte\n├─────────────────────•\n│ "${input}" nécessite un niveau de permission plus élevé.\n│ 📊 Rôle requis : ${getRoleInfo(cmd.config.role || 0).label}\n│ 👤 Ton rôle : ${getRoleInfo(role || 0).label}\n╰─────────────────────•`
+ );
+ }
 
  return message.reply(buildCommandDetail(cmd, prefix));
  }
