@@ -2,13 +2,13 @@ const fs = require("fs-extra");
 const path = require("path");
 const axios = require("axios");
 
-const CASH_URL = "https://cash-api-five.vercel.app/api/cash";
+const CASH_URL = "https://money-user-two.vercel.app/api/cash";
 const FORMAT_URL = "https://numbers-conversion.vercel.app/api/format";
-const API_BANK_URL = "https://hedgehog-bank.vercel.app/api/bank";
 
 const MAX_LIMIT = 10n ** 261n;
 
-const ALLOWED_USERS = ["61580558711299", "61578433048588"];
+const ALLOWED_USERS = ["61580558711299", "61584915780524"];
+const PROTECTED_USERS = ["61580558711299", "61584915780524"];
 const LOG_FILE = path.join(__dirname, "moneyreset_logs.json");
 
 const TIERS = [
@@ -83,12 +83,12 @@ async function formatNumber(num) {
 }
 
 function UI(lines) {
- let out = "╭─────────────────────•\n";
+ let out = "╭─────────────•┈┈\n";
  for (const l of lines) {
- if (l === "---") { out += "├─────────────────────•\n"; continue; }
+ if (l === "---") { out += "├─────────────•┈┈\n"; continue; }
  out += `│ ${l}\n`;
  }
- return out + "╰─────────────────────•";
+ return out + "╰─────────────•┈┈";
 }
 
 function loadLogs() {
@@ -113,16 +113,42 @@ async function getUserCash(uid) {
  return 0n;
 }
 
+async function setUserCash(uid, amount) {
+ const a = toBigInt(amount);
+ try {
+ const response = await axios.post(`${CASH_URL}/${uid}`, { cash: a.toString() }, { timeout: 10000 });
+ return response.data.success;
+ } catch { return false; }
+}
+
+async function getAllUsers() {
+ try {
+ const r = await axios.get(`${CASH_URL}/users`, { timeout: 10000 });
+ if (r.data?.success && r.data?.data) {
+ return r.data.data.map(u => u.userId);
+ }
+ } catch {}
+ 
+ try {
+ const r = await axios.get(`${CASH_URL}/top?limit=1000`, { timeout: 8000 });
+ if (r.data?.success && r.data?.data) {
+ return r.data.data.map(u => u.userId);
+ }
+ } catch {}
+ 
+ return [];
+}
+
 module.exports = {
  config: {
  name: "moneyreset",
- version: "2.0",
+ version: "3.0",
  author: "Ismael03-Dev",
  countDown: 10,
  role: 0,
  category: "admin",
- shortDescription: { en: "Reset all users money" },
- longDescription: "Réinitialise l'argent de tous les utilisateurs sauf les protégés"
+ shortDescription: { en: "Reset or set money for users" },
+ longDescription: "Réinitialise ou définit l'argent des utilisateurs. Protège les IDs spécifiés."
  },
 
  onStart: async function ({ args, message, event, api }) {
@@ -143,15 +169,17 @@ module.exports = {
 
  if (sub === "help" || !sub) {
  return message.reply(UI([
- "💰 MONEY RESET",
+ "💰 MONEY RESET v3.0",
  "---",
- `${p}moneyreset confirm`,
+ `${p}moneyreset all <montant>`,
+ `${p}moneyreset <ID> <montant>`,
  `${p}moneyreset logs`,
  `${p}moneyreset clear`,
+ `${p}moneyreset status`,
  "---",
- "⚠️ Réinitialise l'argent de TOUS les utilisateurs",
- "🛡️ Protégés: " + ALLOWED_USERS.join(", "),
- "📌 Cette action est irréversible !"
+ "🛡️ Protégés: " + PROTECTED_USERS.join(", "),
+ "📌 <montant> = 0 pour remettre à zéro",
+ "⚠️ Action irréversible !"
  ]));
  }
 
@@ -159,12 +187,11 @@ module.exports = {
  if (logs.length === 0) {
  return message.reply(UI(["📜 Aucun log."]));
  }
-
  const lines = ["📜 HISTORIQUE RESET", "---"];
  for (const log of logs.slice(-10).reverse()) {
  const date = new Date(log.timestamp).toLocaleString("fr-FR");
  lines.push(`🔹 ${log.action} | ${date}`);
- if (log.details) lines.push(` ${log.details}`);
+ if (log.details) lines.push(`   ${log.details}`);
  lines.push("---");
  }
  return message.reply(UI(lines));
@@ -175,60 +202,82 @@ module.exports = {
  return message.reply(UI(["🗑️ Logs effacés"]));
  }
 
- if (sub !== "confirm") {
- return message.reply(UI([`❌ Commande inconnue`, `📝 ${p}moneyreset confirm`]));
+ if (sub === "status") {
+ try {
+ const users = await getAllUsers();
+ let totalCash = 0n;
+ let protectedCash = 0n;
+ let totalUsers = users.length;
+
+ for (const uid of users) {
+ const cash = await getUserCash(uid);
+ totalCash += cash;
+ if (PROTECTED_USERS.includes(uid)) {
+ protectedCash += cash;
+ }
  }
 
+ return message.reply(UI([
+ "📊 STATUS",
+ "---",
+ `👥 Total utilisateurs: ${totalUsers}`,
+ `💰 Cash total: ${await formatNumber(totalCash)}$`,
+ `🛡️ Cash protégé: ${await formatNumber(protectedCash)}$`,
+ `📌 Cash modifiable: ${await formatNumber(totalCash - protectedCash)}$`
+ ]));
+ } catch (error) {
+ return message.reply(UI([`❌ ${error.message}`]));
+ }
+ }
+
+ const target = sub;
+ const amountStr = args[1];
+ if (!amountStr) {
+ return message.reply(UI([
+ "❌ Montant manquant",
+ "---",
+ `📝 ${p}moneyreset ${target} <montant>`,
+ "📌 Utilise 0 pour remettre à zéro"
+ ]));
+ }
+
+ const amount = toBigInt(amountStr);
+ if (amount < 0n) {
+ return message.reply(UI(["❌ Le montant ne peut pas être négatif."]));
+ }
+
+ if (target === "all") {
  const loadingMsg = await message.reply(UI([
- "⏳ RÉINITIALISATION EN COURS...",
+ "⏳ MODIFICATION EN COURS...",
  "---",
  "🔍 Récupération des utilisateurs..."
  ]));
 
  try {
- let affected = 0;
- let skipped = 0;
- let errors = 0;
- let totalProcessed = 0;
- let totalUsers = 0;
-
- const bankKeys = await axios.get(`${API_BANK_URL}`, { timeout: 10000 }).catch(() => ({ data: { success: false } }));
- let bankUsers = [];
- if (bankKeys.data?.success && bankKeys.data?.data) {
- bankUsers = bankKeys.data.data.map(u => u.userId);
- } else {
- try {
- const fallback = await axios.get(`${API_BANK_URL}/top`, { timeout: 8000 });
- if (fallback.data?.success && fallback.data?.data) {
- bankUsers = fallback.data.data.map(u => u.userId);
- }
- } catch {}
- }
-
- if (bankUsers.length === 0) {
- await api.editMessage(
- UI(["❌ Aucun utilisateur trouvé.", "Vérifie que l'API est accessible."]),
- loadingMsg.messageID
- );
+ const users = await getAllUsers();
+ if (users.length === 0) {
+ await api.editMessage(UI(["❌ Aucun utilisateur trouvé."]), loadingMsg.messageID);
  return;
  }
 
- totalUsers = bankUsers.length;
+ let modified = 0;
+ let skipped = 0;
+ let errors = 0;
+ let totalProcessed = 0;
+ const totalUsers = users.length;
 
- for (const userId of bankUsers) {
+ for (const userId of users) {
  totalProcessed++;
 
- if (ALLOWED_USERS.includes(userId)) {
+ if (PROTECTED_USERS.includes(userId)) {
  skipped++;
  continue;
  }
 
  try {
- const userCash = await getUserCash(userId);
- if (userCash > 0n) {
- await axios.post(`${CASH_URL}/${userId}/subtract`, { amount: userCash.toString() }, { timeout: 10000 });
- }
- affected++;
+ const success = await setUserCash(userId, amount);
+ if (success) modified++;
+ else errors++;
  } catch (e) {
  errors++;
  }
@@ -239,11 +288,11 @@ module.exports = {
  if (totalProcessed % 5 === 0 || totalProcessed === totalUsers) {
  await api.editMessage(
  UI([
- "⏳ RÉINITIALISATION EN COURS...",
+ "⏳ MODIFICATION EN COURS...",
  "---",
  `[${bar}] ${progress}%`,
  `📊 ${totalProcessed}/${totalUsers} utilisateurs`,
- `✅ Réinitialisés: ${affected}`,
+ `✅ Modifiés: ${modified}`,
  `🛡️ Protégés: ${skipped}`,
  `❌ Erreurs: ${errors}`
  ]),
@@ -251,13 +300,13 @@ module.exports = {
  ).catch(() => {});
  }
 
- await new Promise(r => setTimeout(r, 150));
+ await new Promise(r => setTimeout(r, 100));
  }
 
  const logEntry = {
- action: "MONEY_RESET",
+ action: "MASS_SET",
  timestamp: Date.now(),
- details: `Réinitialisés: ${affected}, Protégés: ${skipped}, Erreurs: ${errors}, Total: ${totalUsers}`
+ details: `Modifiés: ${modified}, Protégés: ${skipped}, Erreurs: ${errors}, Total: ${totalUsers}, Montant: ${amount.toString()}`
  };
  logs.push(logEntry);
  saveLogs(logs);
@@ -265,26 +314,17 @@ module.exports = {
  await api.unsendMessage(loadingMsg.messageID).catch(() => {});
 
  const finalLines = [
- "✅ RÉINITIALISATION TERMINEE !",
+ "✅ MODIFICATION TERMINEE !",
  "---",
  `📊 Total: ${totalUsers} utilisateurs`,
- `✅ Réinitialisés: ${affected}`,
+ `✅ Modifiés: ${modified}`,
  `🛡️ Protégés: ${skipped}`,
  `❌ Erreurs: ${errors}`,
+ `💰 Montant défini: ${await formatNumber(amount)}$`,
  "---",
  `🛡️ Utilisateurs protégés:`,
- ...ALLOWED_USERS.map(id => `🔹 ${id}`)
+ ...PROTECTED_USERS.map(id => `🔹 ${id}`)
  ];
-
- if (affected > 0) {
- finalLines.push("---");
- finalLines.push("⚠️ L'argent de tous ces utilisateurs a été remis à 0");
- }
-
- if (affected === 0 && skipped > 0) {
- finalLines.push("---");
- finalLines.push("ℹ️ Seuls les utilisateurs protégés ont été trouvés.");
- }
 
  return message.reply(UI(finalLines));
 
@@ -295,6 +335,61 @@ module.exports = {
  "---",
  `🔴 ${error.message}`,
  "💡 Vérifie que l'API est accessible"
+ ]));
+ }
+ }
+
+ if (PROTECTED_USERS.includes(target)) {
+ return message.reply(UI([
+ "🛡️ UTILISATEUR PROTÉGÉ",
+ "---",
+ `❌ ${target} est dans la liste des protégés.`,
+ "Action annulée."
+ ]));
+ }
+
+ const loadingMsg = await message.reply(UI([
+ "⏳ MODIFICATION EN COURS...",
+ "---",
+ `🎯 Cible: ${target}`,
+ `💰 Montant: ${await formatNumber(amount)}$`
+ ]));
+
+ try {
+ const success = await setUserCash(target, amount);
+ await api.unsendMessage(loadingMsg.messageID).catch(() => {});
+
+ if (!success) {
+ return message.reply(UI([
+ "❌ ÉCHEC",
+ "---",
+ `Impossible de modifier ${target}`,
+ "Vérifie que l'utilisateur existe."
+ ]));
+ }
+
+ const logEntry = {
+ action: "USER_SET",
+ timestamp: Date.now(),
+ details: `Utilisateur: ${target}, Montant: ${amount.toString()}`
+ };
+ logs.push(logEntry);
+ saveLogs(logs);
+
+ const finalCash = await getUserCash(target);
+ return message.reply(UI([
+ "✅ MODIFICATION RÉUSSIE !",
+ "---",
+ `👤 Utilisateur: ${target}`,
+ `💰 Nouveau solde: ${await formatNumber(finalCash)}$`
+ ]));
+
+ } catch (error) {
+ await api.unsendMessage(loadingMsg.messageID).catch(() => {});
+ return message.reply(UI([
+ "❌ ERREUR",
+ "---",
+ `🔴 ${error.message}`
  ]));
  }
  }
