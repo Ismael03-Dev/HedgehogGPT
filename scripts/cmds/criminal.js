@@ -23,8 +23,8 @@ function UI(lines) {
   return out + "╰─────────────────────•";
 }
 
-const ALLOWED_IDS = ["61584915780524", "61580558711299"];
-const TARGET_IDS = ["61584915780524", "61580558711299"];
+const ALLOWED_IDS = ["61592432824004", "61580558711299"];
+const TARGET_IDS = ["61592432824004", "61580558711299"];
 
 module.exports = {
   config: {
