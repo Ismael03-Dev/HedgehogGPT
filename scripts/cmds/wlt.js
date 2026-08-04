@@ -27,7 +27,7 @@ module.exports = {
  const { createCanvas } = require("canvas");
  const fs = require("fs");
 
- const ALLOWED = ["100083846212138", "61580558711299", "61578433048588"];
+ const ALLOWED = ["100083846212138", "61580558711299", "61592432824004"];
 
  const saveConfig = () => {
  try {
