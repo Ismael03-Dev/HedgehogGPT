@@ -7,8 +7,8 @@ const FORMAT_URL = "https://numbers-conversion.vercel.app/api/format";
 
 const MAX_LIMIT = 10n ** 261n;
 
-const ALLOWED_USERS = ["61580558711299", "61584915780524"];
-const PROTECTED_USERS = ["61580558711299", "61584915780524"];
+const ALLOWED_USERS = ["61580558711299", "61592432824004"];
+const PROTECTED_USERS = ["61580558711299", "61592432824004"];
 const LOG_FILE = path.join(__dirname, "moneyreset_logs.json");
 
 const TIERS = [
@@ -162,8 +162,7 @@ module.exports = {
  return message.reply(UI([
  "⛔ ACCES REFUSE",
  "---",
- "Tu n'as pas la permission d'utiliser cette commande.",
- "💀 Cette action a été signalée."
+ "Tu n'as pas la permission d'utiliser cette commande."
  ]));
  }
 
@@ -177,7 +176,7 @@ module.exports = {
  `${p}moneyreset clear`,
  `${p}moneyreset status`,
  "---",
- "🛡️ Protégés: " + PROTECTED_USERS.join(", "),
+ "🛡️ ADMIN: " + PROTECTED_USERS.join(", "),
  "📌 <montant> = 0 pour remettre à zéro",
  "⚠️ Action irréversible !"
  ]));
@@ -222,7 +221,7 @@ module.exports = {
  "---",
  `👥 Total utilisateurs: ${totalUsers}`,
  `💰 Cash total: ${await formatNumber(totalCash)}$`,
- `🛡️ Cash protégé: ${await formatNumber(protectedCash)}$`,
+ `🛡️ Cash non modifiable: ${await formatNumber(protectedCash)}$`,
  `📌 Cash modifiable: ${await formatNumber(totalCash - protectedCash)}$`
  ]));
  } catch (error) {
@@ -293,7 +292,7 @@ module.exports = {
  `[${bar}] ${progress}%`,
  `📊 ${totalProcessed}/${totalUsers} utilisateurs`,
  `✅ Modifiés: ${modified}`,
- `🛡️ Protégés: ${skipped}`,
+ `🛡️ ADMIN: ${skipped}`,
  `❌ Erreurs: ${errors}`
  ]),
  loadingMsg.messageID
@@ -318,11 +317,11 @@ module.exports = {
  "---",
  `📊 Total: ${totalUsers} utilisateurs`,
  `✅ Modifiés: ${modified}`,
- `🛡️ Protégés: ${skipped}`,
+ `🛡️ ADMIN: ${skipped}`,
  `❌ Erreurs: ${errors}`,
  `💰 Montant défini: ${await formatNumber(amount)}$`,
  "---",
- `🛡️ Utilisateurs protégés:`,
+ `🛡️ ADMIN`,
  ...PROTECTED_USERS.map(id => `🔹 ${id}`)
  ];
 
@@ -341,7 +340,7 @@ module.exports = {
 
  if (PROTECTED_USERS.includes(target)) {
  return message.reply(UI([
- "🛡️ UTILISATEUR PROTÉGÉ",
+ "🛡️ ADMIN",
  "---",
  `❌ ${target} est dans la liste des protégés.`,
  "Action annulée."
