@@ -21,14 +21,36 @@ const boldMap = {
     '^': '^', '`': '`', "'": "'", '"': '"'
 };
 
-/**
- * Convertit un texte en police bold Unicode
- * @param {string} text 
- * @returns {string}
- */
+function isUrl(text) {
+    if (!text || typeof text !== "string") return false;
+    const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/i;
+    return urlPattern.test(text);
+}
+
 function toBold(text) {
     if (!text || typeof text !== "string") return text;
-    return text.split('').map(char => boldMap[char] || char).join('');
+    
+    const parts = [];
+    let currentText = text;
+    let pos = 0;
+    const urlRegex = /(https?:\/\/[^\s]+)/gi;
+    let match;
+    
+    while ((match = urlRegex.exec(text)) !== null) {
+        const before = text.slice(pos, match.index);
+        if (before) {
+            parts.push(before.split('').map(char => boldMap[char] || char).join(''));
+        }
+        parts.push(match[0]);
+        pos = match.index + match[0].length;
+    }
+    
+    if (pos < text.length) {
+        const remaining = text.slice(pos);
+        parts.push(remaining.split('').map(char => boldMap[char] || char).join(''));
+    }
+    
+    return parts.join('');
 }
 
 module.exports = { toBold };
