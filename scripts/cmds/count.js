@@ -3,6 +3,8 @@ const fs = require("fs-extra");
 const path = require("path");
 const axios = require("axios");
 
+const API_URL = "https://count-msg.vercel.app/api/count";
+
 module.exports = {
 	config: {
 		name: "count",
@@ -53,161 +55,113 @@ module.exports = {
 
 	onStart: async function ({ args, threadsData, message, event, api, commandName, getLang }) {
 		const { threadID, senderID } = event;
-		const threadData = await threadsData.get(threadID);
-		const { members } = threadData;
-		const usersInGroup = (await api.getThreadInfo(threadID)).participantIDs;
 		
-		let arraySort = [];
-		for (const user of members) {
-			if (!usersInGroup.includes(user.userID)) continue;
-			const charac = "️️️️️️️️️️️️️️️️️";
-			arraySort.push({
-				name: user.name.includes(charac) ? `Uid: ${user.userID}` : user.name,
-				count: user.count || 0,
-				uid: user.userID
-			});
-		}
-		
-		let stt = 1;
-		arraySort.sort((a, b) => b.count - a.count);
-		arraySort.map(item => item.stt = stt++);
-
 		if (args[0] && args[0].toLowerCase() == "all") {
 			await message.reply(getLang("generating"));
 			try {
-				const imagePath = await generateRankingImage(arraySort, threadID, api);
-				const totalMessages = arraySort.reduce((sum, u) => sum + u.count, 0);
-				const activeUsers = arraySort.filter(u => u.count > 0).length;
+				const rankingRes = await axios.get(`${API_URL}/${threadID}/ranking?limit=20`);
+				const rankingData = rankingRes.data.data;
+				
+				const imagePath = await generateRankingImage(rankingData, threadID);
 				await message.reply({
-					body: `📊 CLASSEMENT DES MESSAGES\n\n📝 Total: ${totalMessages.toLocaleString()} messages\n👥 ${activeUsers} utilisateurs actifs`,
+					body: `📊 CLASSEMENT DES MESSAGES\n\n📝 Total: ${rankingData.totalMessages.toLocaleString()} messages\n👥 ${rankingData.activeMembers} utilisateurs actifs`,
 					attachment: fs.createReadStream(imagePath)
 				});
 				setTimeout(() => { try { fs.unlinkSync(imagePath); } catch {} }, 10000);
 			} catch (err) {
 				console.error("[Count Image Error]", err.message);
-				let msg = getLang("count");
-				const endMessage = getLang("endMessage");
-				for (const item of arraySort) {
-					if (item.count > 0)
-						msg += `\n${item.stt}/ ${item.name}: ${item.count}`;
+				try {
+					const fallback = await axios.get(`${API_URL}/${threadID}/ranking?limit=50`);
+					let msg = getLang("count");
+					const endMessage = getLang("endMessage");
+					for (const item of fallback.data.data.top) {
+						msg += `\n${item.rank}/ ${item.name}: ${item.count}`;
+					}
+					message.reply(msg + "\n\n" + endMessage);
+				} catch {
+					message.reply("❌ Erreur lors de la récupération des données");
 				}
-				message.reply(msg + "\n\n" + endMessage);
 			}
 			return;
 		}
 
-		if (args[0]) {
-			if (event.mentions) {
-				let msg = "";
-				for (const id in event.mentions) {
-					const findUser = arraySort.find(item => item.uid == id);
-					if (findUser) {
-						msg += `\n${getLang("result", findUser.name, findUser.stt, findUser.count)}`;
+		if (args[0] && event.mentions) {
+			let msg = "";
+			for (const id in event.mentions) {
+				try {
+					const userRes = await axios.get(`${API_URL}/${threadID}/ranking/${id}`);
+					const userData = userRes.data.data;
+					if (userData.found) {
+						msg += `\n${getLang("result", userData.name, userData.rank, userData.count)}`;
 					}
+				} catch {
+					msg += `\n❌ Utilisateur ${id} introuvable`;
 				}
-				message.reply(msg || "❌ Aucun utilisateur trouvé");
-				return;
 			}
+			message.reply(msg || "❌ Aucun utilisateur trouvé");
+			return;
 		}
 		
-		const findUser = arraySort.find(item => item.uid == senderID);
 		if (!args[0]) {
 			try {
+				const userRes = await axios.get(`${API_URL}/${threadID}/ranking/${senderID}`);
+				const userData = userRes.data.data;
+				
+				if (!userData.found) {
+					return message.reply("❌ Tu n'as pas encore envoyé de message dans ce groupe.");
+				}
+				
 				const avatarUrl = await getAvatarUrl(senderID, api);
-				const imagePath = await generateSingleRankCard(findUser, arraySort, avatarUrl);
+				const imagePath = await generateSingleRankCard(userData, avatarUrl);
 				await message.reply({
-					body: `📊 TON CLASSEMENT\n\n🏆 Rang #${findUser.stt}\n💬 ${findUser.count.toLocaleString()} messages\n👥 Sur ${arraySort.filter(u => u.count > 0).length} utilisateurs`,
+					body: `📊 TON CLASSEMENT\n\n🏆 Rang #${userData.rank}\n💬 ${userData.count.toLocaleString()} messages\n👥 Sur ${userData.totalMembers} utilisateurs`,
 					attachment: fs.createReadStream(imagePath)
 				});
 				setTimeout(() => { try { fs.unlinkSync(imagePath); } catch {} }, 10000);
 			} catch (err) {
 				console.error("[Count Image Error]", err.message);
-				message.reply(getLang("yourResult", findUser.stt, findUser.count));
+				try {
+					const fallback = await axios.get(`${API_URL}/${threadID}/ranking/${senderID}`);
+					const userData = fallback.data.data;
+					if (userData.found) {
+						message.reply(getLang("yourResult", userData.rank, userData.count));
+					} else {
+						message.reply("❌ Tu n'as pas encore envoyé de message dans ce groupe.");
+					}
+				} catch {
+					message.reply("❌ Erreur lors de la récupération de ton classement");
+				}
 			}
 			return;
 		}
 
 		if (args[0] && args[0].toLowerCase() == "all") {
-			let msg = getLang("count");
-			const endMessage = getLang("endMessage");
-			for (const item of arraySort) {
-				if (item.count > 0)
-					msg += `\n${item.stt}/ ${item.name}: ${item.count}`;
-			}
-
-			if ((msg + endMessage).length > 19999) {
-				msg = "";
-				let page = parseInt(args[1]);
-				if (isNaN(page)) page = 1;
-				const splitPage = global.utils.splitPage(arraySort, 50);
-				arraySort = splitPage.allPage[page - 1];
-				for (const item of arraySort) {
+			try {
+				const rankingRes = await axios.get(`${API_URL}/${threadID}/ranking?limit=50`);
+				const rankingData = rankingRes.data.data;
+				let msg = getLang("count");
+				const endMessage = getLang("endMessage");
+				for (const item of rankingData.top) {
 					if (item.count > 0)
-						msg += `\n${item.stt}/ ${item.name}: ${item.count}`;
+						msg += `\n${item.rank}/ ${item.name}: ${item.count}`;
 				}
-				msg += getLang("page", page, splitPage.totalPage)
-					+ `\n${getLang("reply")}`
-					+ `\n\n${endMessage}`;
-
-				return message.reply(msg, (err, info) => {
-					if (err) return message.err(err);
-					global.GoatBot.onReply.set(info.messageID, {
-						commandName,
-						messageID: info.messageID,
-						splitPage,
-						author: senderID
-					});
-				});
+				message.reply(msg + "\n\n" + endMessage);
+			} catch {
+				message.reply("❌ Erreur lors de la récupération du classement");
 			}
-			message.reply(msg);
 		}
-	},
-
-	onReply: ({ message, event, Reply, commandName, getLang }) => {
-		const { senderID, body } = event;
-		const { author, splitPage } = Reply;
-		if (author != senderID) return;
-		const page = parseInt(body);
-		if (isNaN(page) || page < 1 || page > splitPage.totalPage)
-			return message.reply(getLang("invalidPage"));
-		let msg = getLang("count");
-		const endMessage = getLang("endMessage");
-		const arraySort = splitPage.allPage[page - 1];
-		for (const item of arraySort) {
-			if (item.count > 0)
-				msg += `\n${item.stt}/ ${item.name}: ${item.count}`;
-		}
-		msg += getLang("page", page, splitPage.totalPage)
-			+ "\n" + getLang("reply")
-			+ "\n\n" + endMessage;
-		message.reply(msg, (err, info) => {
-			if (err) return message.err(err);
-			message.unsend(Reply.messageID);
-			global.GoatBot.onReply.set(info.messageID, {
-				commandName,
-				messageID: info.messageID,
-				splitPage,
-				author: senderID
-			});
-		});
 	},
 
 	onChat: async ({ usersData, threadsData, event }) => {
 		const { senderID, threadID } = event;
-		const members = await threadsData.get(threadID, "members");
-		const findMember = members.find(user => user.userID == senderID);
-		if (!findMember) {
-			members.push({
-				userID: senderID,
-				name: await usersData.getName(senderID),
-				nickname: null,
-				inGroup: true,
-				count: 1
-			});
-		}
-		else
-			findMember.count += 1;
-		await threadsData.set(threadID, members, "members");
+		try {
+			const userInfo = await usersData.get(senderID);
+			const userName = userInfo?.name || "User";
+			await axios.post(`${API_URL}/${threadID}/message`, {
+				userId: senderID,
+				userName: userName
+			}).catch(() => {});
+		} catch {}
 	}
 };
 
@@ -234,7 +188,7 @@ function roundRect(ctx, x, y, w, h, r) {
 	ctx.closePath();
 }
 
-async function generateRankingImage(arraySort, threadID, api) {
+async function generateRankingImage(rankingData, threadID) {
 	const W = 800;
 	const H = 920;
 	const canvas = createCanvas(W, H);
@@ -271,8 +225,8 @@ async function generateRankingImage(arraySort, threadID, api) {
 
 	ctx.fillStyle = "#6c6c8a";
 	ctx.font = "14px 'Courier New'";
-	const totalMessages = arraySort.reduce((sum, u) => sum + u.count, 0);
-	const activeUsers = arraySort.filter(u => u.count > 0).length;
+	const totalMessages = rankingData.totalMessages || 0;
+	const activeUsers = rankingData.activeMembers || 0;
 	ctx.fillText(`📊 ${totalMessages.toLocaleString()} messages • 👥 ${activeUsers} utilisateurs actifs`, W/2, 100);
 
 	const headerY = 125;
@@ -297,11 +251,11 @@ async function generateRankingImage(arraySort, threadID, api) {
 
 	let y = headerY + 45;
 	const medals = ["🥇", "🥈", "🥉"];
-	const topUsers = arraySort.filter(u => u.count > 0).slice(0, 20);
+	const topUsers = rankingData.top || [];
 
 	for (let i = 0; i < Math.min(topUsers.length, 20); i++) {
 		const user = topUsers[i];
-		const rank = i + 1;
+		const rank = user.rank || i + 1;
 		const isEven = i % 2 === 0;
 
 		ctx.fillStyle = isEven ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)";
@@ -364,15 +318,15 @@ async function generateRankingImage(arraySort, threadID, api) {
 	return imgPath;
 }
 
-async function generateSingleRankCard(user, arraySort, avatarUrl) {
+async function generateSingleRankCard(userData, avatarUrl) {
 	const W = 600;
 	const H = 420;
 	const canvas = createCanvas(W, H);
 	const ctx = canvas.getContext("2d");
 
-	const rank = user.stt;
-	const totalUsers = arraySort.filter(u => u.count > 0).length;
-	const topPercent = Math.round(((totalUsers - rank) / totalUsers) * 100);
+	const rank = userData.rank || 0;
+	const totalUsers = userData.totalMembers || 0;
+	const topPercent = totalUsers > 0 ? Math.round(((totalUsers - rank) / totalUsers) * 100) : 0;
 
 	const bg = ctx.createLinearGradient(0, 0, W, H);
 	bg.addColorStop(0, "#0d0d1a");
@@ -458,7 +412,7 @@ async function generateSingleRankCard(user, arraySort, avatarUrl) {
 	ctx.fillStyle = "#e8e8e8";
 	ctx.font = "bold 20px 'Courier New'";
 	ctx.textAlign = "center";
-	const nameDisplay = user.name.length > 25 ? user.name.slice(0, 23) + "..." : user.name;
+	const nameDisplay = userData.name?.length > 25 ? userData.name.slice(0, 23) + "..." : userData.name || "User";
 	ctx.fillText(nameDisplay, W / 2, 268);
 
 	ctx.fillStyle = "rgba(255,255,255,0.08)";
@@ -467,7 +421,7 @@ async function generateSingleRankCard(user, arraySort, avatarUrl) {
 
 	ctx.fillStyle = "#d4af37";
 	ctx.font = "bold 17px 'Courier New'";
-	ctx.fillText(`💬 ${user.count.toLocaleString()} MESSAGES`, W / 2, 310);
+	ctx.fillText(`💬 ${userData.count.toLocaleString()} MESSAGES`, W / 2, 310);
 
 	ctx.fillStyle = "#6c6c8a";
 	ctx.font = "13px 'Courier New'";
@@ -480,7 +434,7 @@ async function generateSingleRankCard(user, arraySort, avatarUrl) {
 	ctx.fillStyle = "rgba(212, 175, 55, 0.35)";
 	ctx.font = "10px 'Courier New'";
 	const rankDisplay = rank <= 3 ? ["🥇", "🥈", "🥉"][rank - 1] : `#${rank}`;
-	ctx.fillText(`RANG ${rankDisplay} • ${user.count.toLocaleString()} MESSAGES ENVOYÉS`, W / 2, 382);
+	ctx.fillText(`RANG ${rankDisplay} • ${userData.count.toLocaleString()} MESSAGES ENVOYÉS`, W / 2, 382);
 
 	const d = new Date();
 	ctx.fillStyle = "rgba(212, 175, 55, 0.2)";
